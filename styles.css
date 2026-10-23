@@ -385,3 +385,36 @@ body::before {
 @media (min-width: 600px) {
   .app, .bottom-nav, .mini-player, .modal, .fp-content { max-width: 520px; }
 }
+
+
+/* Admin pending review cards */
+.admin-pending-list { display: flex; flex-direction: column; gap: 14px; }
+.admin-pending-card {
+  padding: 14px !important;
+  border: 1px solid rgba(255,255,255,.08);
+  border-radius: 16px;
+  background: rgba(0,0,0,.25);
+}
+.admin-pending-top { display: flex; gap: 12px; align-items: flex-start; margin-bottom: 10px; }
+.admin-pending-cover {
+  width: 72px; height: 72px; border-radius: 12px; object-fit: cover;
+  background: #1a1a1e; flex-shrink: 0;
+}
+.admin-pending-cover--empty { border: 1px solid rgba(255,255,255,.1); }
+.admin-pending-title { font-size: 1rem; display: block; margin-bottom: 4px; }
+.admin-pending-artist { color: var(--text-dim, #aaa); font-size: .85rem; margin-bottom: 6px; }
+.admin-pending-dl {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 8px 12px;
+  margin: 0 0 10px; font-size: .78rem;
+}
+.admin-pending-dl dt { color: var(--text-dim, #888); font-weight: 500; }
+.admin-pending-dl dd { margin: 2px 0 0; word-break: break-word; }
+.admin-pending-lyrics { margin: 8px 0; font-size: .8rem; }
+.admin-pending-lyrics pre {
+  white-space: pre-wrap; max-height: 160px; overflow: auto;
+  background: rgba(0,0,0,.35); padding: 10px; border-radius: 10px; margin: 8px 0 0;
+}
+.admin-pending-actions { flex-wrap: wrap; gap: 8px; display: flex; }
+@media (max-width: 520px) {
+  .admin-pending-dl { grid-template-columns: 1fr; }
+}

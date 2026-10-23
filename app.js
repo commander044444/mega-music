@@ -281,6 +281,25 @@
     renderTracks();
   }
 
+  /** Staff/owner: play any track object (including non-published) without adding to public catalog */
+  function playPreviewTrack(raw) {
+    if (!raw) return;
+    const t = mapTrack(raw);
+    if (!t.audio) {
+      showMsg($('#adminContent'), 'فایل صوتی برای این آهنگ ثبت نشده است.', 'error');
+      return;
+    }
+    let idx = state.queue.findIndex(x => String(x.id) === String(t.id));
+    if (idx < 0) {
+      state.queue.push(t);
+      idx = state.queue.length - 1;
+    } else {
+      state.queue[idx] = t; // refresh urls/metadata
+    }
+    loadTrack(idx, true);
+    openFullPlayer();
+  }
+
   function loadTrack(index, autoplay) {
     if (index < 0 || index >= state.queue.length) return;
     const t = state.queue[index];
@@ -902,21 +921,76 @@
         </div>
         <p class="msg msg-info">«کل ثبت‌نام‌ها» از جدول profiles است و به وضعیت تأیید ایمیل وابسته نیست. «نشان تأیید» با تأیید ایمیل یکی نیست.</p>`;
       } else if (tab === 'pending') {
-        const { data } = await sb.from('tracks')
-          .select('id, title, artist_name, status, uploaded_by, created_at, cover_url')
+        if (!state.isStaff) {
+          box.innerHTML = '<p class="msg msg-error">دسترسی فقط برای مدیر/مالک.</p>';
+          return;
+        }
+        const { data, error } = await sb.from('tracks')
+          .select(`
+            id, title, artist_name, album, cover_url, audio_url, duration_seconds,
+            tags, language, lyrics, is_downloadable, status, moderation_note,
+            uploaded_by, created_at, updated_at, reviewed_by, reviewed_at
+          `)
           .in('status', ['pending', 'in_review', 'needs_changes'])
-          .order('created_at', { ascending: true }).limit(50);
-        if (!data?.length) { box.innerHTML = '<p class="msg msg-info">موردی در انتظار نیست.</p>'; return; }
-        box.innerHTML = `<div class="admin-list">${data.map(t => `
-          <div class="admin-item" data-tid="${t.id}">
-            <strong>${escapeHtml(t.title)}</strong> — ${escapeHtml(t.artist_name)}
-            <span class="status-pill status-pending">${STATUS_FA[t.status] || t.status}</span>
-            <div class="actions">
-              <button type="button" class="btn btn-primary btn-sm" data-mod="publish" data-id="${t.id}">انتشار</button>
-              <button type="button" class="btn btn-ghost btn-sm" data-mod="reject" data-id="${t.id}">رد</button>
-              <button type="button" class="btn btn-ghost btn-sm" data-mod="needs" data-id="${t.id}">نیاز به اصلاح</button>
+          .order('created_at', { ascending: true })
+          .limit(50);
+        if (error) {
+          box.innerHTML = `<p class="msg msg-error">${escapeHtml(error.message)}</p>`;
+          return;
+        }
+        if (!data?.length) {
+          box.innerHTML = '<p class="msg msg-info">موردی در انتظار نیست.</p>';
+          return;
+        }
+        // Resolve uploader display names (staff can read profiles)
+        const uploaderIds = [...new Set(data.map(x => x.uploaded_by).filter(Boolean))];
+        let uploaderMap = {};
+        if (uploaderIds.length) {
+          const { data: ups } = await sb.from('profiles')
+            .select('id, username, display_name')
+            .in('id', uploaderIds);
+          (ups || []).forEach(u => { uploaderMap[u.id] = u; });
+        }
+        state.adminPendingTracks = data;
+        box.innerHTML = `<div class="admin-list admin-pending-list">${data.map(tr => {
+          const up = uploaderMap[tr.uploaded_by] || {};
+          const tags = Array.isArray(tr.tags) ? tr.tags.join('، ') : (tr.tags || '');
+          const dur = tr.duration_seconds ? formatTime(tr.duration_seconds) : '—';
+          const cover = tr.cover_url
+            ? `<img class="admin-pending-cover" src="${escapeHtml(tr.cover_url)}" alt="" loading="lazy">`
+            : `<div class="admin-pending-cover admin-pending-cover--empty"></div>`;
+          const lyricsPreview = (tr.lyrics || '').trim()
+            ? `<details class="admin-pending-lyrics"><summary>متن آهنگ</summary><pre>${escapeHtml(tr.lyrics)}</pre></details>`
+            : '<p class="admin-pending-meta">متن آهنگ ثبت نشده</p>';
+          return `<article class="admin-item admin-pending-card" data-tid="${escapeHtml(tr.id)}">
+            <div class="admin-pending-top">
+              ${cover}
+              <div class="admin-pending-main">
+                <strong class="admin-pending-title">${escapeHtml(tr.title)}</strong>
+                <div class="admin-pending-artist">${escapeHtml(tr.artist_name || '—')}</div>
+                <span class="status-pill status-pending">${STATUS_FA[tr.status] || tr.status}</span>
+              </div>
             </div>
-          </div>`).join('')}</div>`;
+            <dl class="admin-pending-dl">
+              <div><dt>آلبوم</dt><dd>${escapeHtml(tr.album || '—')}</dd></div>
+              <div><dt>مدت</dt><dd>${escapeHtml(dur)}</dd></div>
+              <div><dt>زبان</dt><dd>${escapeHtml(tr.language || '—')}</dd></div>
+              <div><dt>برچسب‌ها</dt><dd>${escapeHtml(tags || '—')}</dd></div>
+              <div><dt>ارسال‌کننده</dt><dd>${escapeHtml(up.display_name || up.username || tr.uploaded_by || '—')}${up.username ? ' · @' + escapeHtml(up.username) : ''}</dd></div>
+              <div><dt>تاریخ ارسال</dt><dd>${escapeHtml(tr.created_at ? new Date(tr.created_at).toLocaleString('fa-IR') : '—')}</dd></div>
+              <div><dt>قابل دانلود</dt><dd>${tr.is_downloadable ? 'بله' : 'خیر'}</dd></div>
+              <div><dt>یادداشت قبلی</dt><dd>${escapeHtml(tr.moderation_note || '—')}</dd></div>
+            </dl>
+            ${lyricsPreview}
+            <div class="actions admin-pending-actions">
+              <button type="button" class="btn btn-primary btn-sm" data-preview-play="${escapeHtml(tr.id)}">▶ پخش پیش‌نمایش</button>
+              <button type="button" class="btn btn-primary btn-sm" data-mod="publish" data-id="${escapeHtml(tr.id)}">انتشار</button>
+              <button type="button" class="btn btn-ghost btn-sm" data-mod="reject" data-id="${escapeHtml(tr.id)}">رد</button>
+              <button type="button" class="btn btn-ghost btn-sm" data-mod="needs" data-id="${escapeHtml(tr.id)}">نیاز به اصلاح</button>
+            </div>
+          </article>`;
+        }).join('')}</div>
+        <p class="msg msg-info">پیش‌نمایش فقط برای مدیر/مالک است و آهنگ را در کاتالوگ عمومی منتشر نمی‌کند.</p>`;
       } else if (tab === 'users') {
         const { data } = await sb.from('profiles')
           .select('id, username, display_name, role, is_verified, is_banned, created_at')
@@ -1059,6 +1133,19 @@
       }
       const userRow = e.target.closest('[data-kind="user"]');
       if (userRow?.dataset.uid) { openUserProfile(userRow.dataset.uid); return; }
+      const prevPlay = e.target.closest('[data-preview-play]');
+      if (prevPlay) {
+        const id = prevPlay.getAttribute('data-preview-play');
+        const raw = (state.adminPendingTracks || []).find(x => String(x.id) === String(id));
+        if (raw) playPreviewTrack(raw);
+        else {
+          const el = document.createElement('div');
+          el.className = 'msg msg-error';
+          el.textContent = 'آهنگ برای پیش‌نمایش پیدا نشد.';
+          $('#adminContent')?.prepend(el);
+        }
+        return;
+      }
       const mod = e.target.closest('[data-mod]');
       if (mod) { moderateTrack(mod.dataset.id, mod.dataset.mod === 'publish' ? 'published' : mod.dataset.mod === 'reject' ? 'rejected' : mod.dataset.mod === 'remove' ? 'removed' : 'needs_changes'); return; }
       const ban = e.target.closest('[data-ban]');
