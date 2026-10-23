@@ -94,7 +94,9 @@ AS $$
   );
 $$;
 
--- Block any client attempt to change role (or id)
+-- Block client changes to id/role (expanded in migration-001 to also lock
+-- is_verified / is_banned / banned_until / ban_reason). Always re-run migration-001
+-- after this file so the full protector is installed.
 CREATE OR REPLACE FUNCTION public.protect_profile_role()
 RETURNS TRIGGER
 LANGUAGE plpgsql
@@ -108,6 +110,26 @@ BEGIN
   IF NEW.role IS DISTINCT FROM OLD.role THEN
     RAISE EXCEPTION 'role can only be changed by a database administrator (SQL Editor / service role)';
   END IF;
+  -- If social columns exist, lock them for non-staff (safe when columns absent)
+  BEGIN
+    IF NOT public.is_staff() THEN
+      IF (to_jsonb(NEW) ? 'is_verified') AND (NEW.is_verified IS DISTINCT FROM OLD.is_verified) THEN
+        RAISE EXCEPTION 'verification and ban fields can only be changed by authorized staff';
+      END IF;
+      IF (to_jsonb(NEW) ? 'is_banned') AND (
+           NEW.is_banned IS DISTINCT FROM OLD.is_banned
+           OR NEW.banned_until IS DISTINCT FROM OLD.banned_until
+           OR NEW.ban_reason IS DISTINCT FROM OLD.ban_reason
+         ) THEN
+        RAISE EXCEPTION 'verification and ban fields can only be changed by authorized staff';
+      END IF;
+    END IF;
+  EXCEPTION
+    WHEN undefined_column THEN
+      NULL; -- columns not migrated yet
+    WHEN undefined_function THEN
+      NULL; -- is_staff not present yet during early bootstrap
+  END;
   NEW.updated_at := now();
   RETURN NEW;
 END;
