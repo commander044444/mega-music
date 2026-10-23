@@ -384,3 +384,5 @@ CREATE POLICY "mega_audio_owner_delete"
 COMMENT ON TABLE public.tracks IS 'Catalog starts empty. No seed data.';
 COMMENT ON FUNCTION public.current_user_role() IS 'SECURITY DEFINER role lookup to avoid RLS recursion on profiles.';
 COMMENT ON FUNCTION public.protect_profile_role() IS 'Prevents clients from escalating role or changing profile id.';
+
+-- After this file, run migration-001-social.sql for follows, bans, verification, user submissions.
