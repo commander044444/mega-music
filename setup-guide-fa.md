@@ -1,59 +1,66 @@
-# راهنمای راه‌اندازی MEGA MUSIC
+# راهنمای راه‌اندازی و امنیت MEGA MUSIC
 
-کاتالوگ از ابتدا **خالی** است. هیچ آهنگ نمونه‌ای وجود ندارد.
+کاتالوگ از ابتدا **خالی** است. هیچ آهنگ نمونه‌ای در کد یا دیتابیس قرار ندارد.
 
 ## ۱. پروژه Supabase
 
-1. در [supabase.com](https://supabase.com) یک پروژه بسازید.
-2. از Settings → API مقدار **Project URL** و **anon public** key را کپی کنید.
-3. در فایل `config.js` در ریشهٔ مخزن این دو مقدار را قرار دهید و commit/push کنید.
+1. در [supabase.com](https://supabase.com) پروژه بسازید.
+2. از **Settings → API** مقدارهای زیر را بردارید:
+   - Project URL
+   - `anon` `public` key
+3. فقط این دو مقدار را در `config.js` قرار دهید و push کنید.
+4. **هرگز** کلید `service_role` را در فرانت‌اند، گیت، یا GitHub Pages قرار ندهید.
 
 ## ۲. اجرای SQL
 
-در SQL Editor به‌ترتیب محتوای فایل `supabase-schema.sql` را اجرا کنید.
+در **SQL Editor** کل فایل `supabase-schema.sql` را یک‌بار اجرا کنید.
 
-هیچ دادهٔ نمونه (seed) درج نمی‌شود.
+این اسکریپت شامل:
 
-## ۳. Storage
+- جداول profiles / tracks / playlists / likes / …
+- توابع `is_owner()` و `is_staff()` از نوع SECURITY DEFINER (بدون بازگشت بازگشتی RLS)
+- تریگر `protect_profile_role` که تغییر `role` از سمت کلاینت را مسدود می‌کند
+- سیاست‌های RLS
+- سیاست‌های Storage: **فقط مالک** می‌تواند در باکت‌های `covers` و `audio` آپلود/حذف کند
 
-در بخش Storage دو باکت بسازید:
+هیچ دادهٔ نمونه درج نمی‌شود.
 
-| باکت   | دسترسی پیشنهادی |
-|--------|------------------|
-| covers | Public           |
-| audio  | Public (یا private + signed URL در فاز بعدی) |
+## ۳. ساخت باکت‌های Storage
 
-سیاست‌های ساده برای آپلود توسط کاربر احرازهویت‌شده:
+در Storage دو باکت بسازید (نام دقیق):
 
-```sql
--- مثال برای covers (در صورت نیاز تنظیم کنید)
-CREATE POLICY "Auth upload covers" ON storage.objects
-  FOR INSERT TO authenticated
-  WITH CHECK (bucket_id = 'covers');
+| باکت   | Public |
+|--------|--------|
+| covers | بله    |
+| audio  | بله    |
 
-CREATE POLICY "Public read covers" ON storage.objects
-  FOR SELECT USING (bucket_id = 'covers');
+سیاست‌های دسترسی از طریق همان `supabase-schema.sql` روی `storage.objects` اعمال می‌شوند.  
+اگر باکت‌ها را قبل از اجرای SQL ساخته‌اید، بعد از ساخت باکت دوباره بخش Storage policies را اجرا کنید یا کل اسکریپت را (با `IF NOT EXISTS` / `DROP POLICY`) دوباره بزنید.
 
-CREATE POLICY "Auth upload audio" ON storage.objects
-  FOR INSERT TO authenticated
-  WITH CHECK (bucket_id = 'audio');
+### تصمیم طراحی دربارهٔ دانلود
 
-CREATE POLICY "Public read audio" ON storage.objects
-  FOR SELECT USING (bucket_id = 'audio');
-```
+در این فاز فایل‌های `audio` و `covers` **برای پخش عمومی خوانا** هستند (URL عمومی).  
+بنابراین پرچم `is_downloadable` فقط **متادیتا** است و جلوی دانلود مستقیم URL را نمی‌گیرد.
+
+اگر بعداً دانلود واقعی محدود می‌خواهید:
+
+1. باکت `audio` را private کنید،
+2. پخش را با signed URL کوتاه‌عمر انجام دهید،
+3. دانلود را فقط از طریق Edge Function با بررسی نقش و پرچم انجام دهید.
 
 ## ۴. احراز هویت
 
 - Authentication → Providers → Email را فعال کنید.
-- در صورت تمایل تأیید ایمیل را روشن کنید.
-- Redirect URLها را با آدرس GitHub Pages تنظیم کنید:  
-  `https://commander044444.github.io/mega-music/`
+- Redirect URLها:
+  - `https://commander044444.github.io/mega-music/`
+  - در صورت نیاز `http://localhost:5500/` برای تست محلی
+- تأیید ایمیل اختیاری است؛ اگر روشن باشد کاربر تا تأیید، session محدود خواهد داشت.
 
-## ۵. اولین مالک (امن)
+## ۵. تعیین اولین مالک (فقط از SQL Editor)
 
-1. یک‌بار از طریق سایت ثبت‌نام کنید.
-2. در Supabase → Authentication → Users شناسهٔ UUID خود را کپی کنید.
-3. در SQL Editor فقط یک‌بار اجرا کنید:
+1. یک‌بار از سایت ثبت‌نام کنید.
+2. در Authentication → Users شناسه UUID را کپی کنید.
+3. در SQL Editor **فقط یک‌بار**:
 
 ```sql
 UPDATE public.profiles
@@ -61,22 +68,37 @@ SET role = 'owner'
 WHERE id = 'YOUR_USER_UUID';
 ```
 
-هرگز این به‌روزرسانی را عمومی یا از طریق کلاینت انجام ندهید.
+این دستور با نقش ادمین پروژه اجرا می‌شود و از تریگر محافظ نقش عبور می‌کند.  
+کاربر عادی / کلید anon **نمی‌تواند** role خود را عوض کند.
 
-## ۶. بارگذاری اولین آهنگ واقعی
+## ۶. تست امنیتی پیشنهادی (دستی)
 
-1. با حساب مالک وارد شوید.
-2. از نوار پایین «بیشتر» را باز کنید.
-3. فرم «بارگذاری آهنگ» را پر کنید (عنوان، هنرمند، فایل صوتی الزامی است).
-4. پس از موفقیت، آهنگ در صفحهٔ اصلی و جستجو ظاهر می‌شود.
+پس از پیکربندی:
 
-## ۷. Google OAuth (اختیاری)
+| تست | انتظار |
+|-----|--------|
+| بازدید مهمان | کاتالوگ خالی یا فقط published؛ بدون پنل آپلود |
+| ثبت‌نام کاربر عادی | role = user؛ آپلود Storage رد می‌شود |
+| تلاش UPDATE role از کلاینت | خطا از تریگر / عدم موفقیت |
+| ورود مالک | فرم آپلود دیده می‌شود؛ insert track و upload موفق |
+| فایل غیرصوتی / خیلی بزرگ | رد شدن در کلاینت قبل از آپلود |
+| شکست insert بعد از upload | تلاش برای حذف فایل یتیم در Storage |
 
-در Authentication → Providers → Google تنظیمات را انجام دهید و Redirect URL صفحات را اضافه کنید.
+## ۷. بارگذاری اولین آهنگ واقعی
 
-## ۸. بررسی نهایی
+1. با حساب **owner** وارد شوید.
+2. نوار پایین → **بیشتر**.
+3. عنوان، هنرمند و فایل صوتی را پر کنید.
+4. پس از موفقیت، آهنگ با `status = published` در صفحه اصلی ظاهر می‌شود.
 
-- سایت بدون config فقط حالت خالی و بنر پیکربندی را نشان می‌دهد.
-- پس از config و SQL، کاتالوگ همچنان خالی است تا شما آهنگ واقعی اضافه کنید.
-- جستجو روی داده‌های واقعی کار می‌کند.
-- پخش‌کننده فقط وقتی آهنگ منتشرشده وجود دارد فعال می‌شود.
+## ۸. محدودیت‌های صادقانه این نسخه
+
+- پلی‌لیست و لایک در UI کامل پیاده‌سازی نشده‌اند (دکمه افزودن پیام می‌دهد).
+- دانلود محدود فنی نیست در حالی که باکت audio عمومی است.
+- Analytics / moderation پیشرفته UI ندارد؛ جداول برای توسعه بعدی آماده‌اند.
+
+## ۹. عیب‌یابی رایج
+
+- بنر قرمز بالای صفحه → `config.js` خالی است.
+- خطای RLS هنگام آپلود → کاربر owner نیست یا سیاست Storage اجرا نشده.
+- خطای recursion روی profiles → مطمئن شوید نسخهٔ جدید schema (با `is_owner` و تریگر) اجرا شده و سیاست قدیمی بازگشتی حذف شده است.

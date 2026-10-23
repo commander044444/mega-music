@@ -379,6 +379,37 @@
   }
 
   // ---------- Owner upload ----------
+  const MAX_AUDIO_BYTES = 30 * 1024 * 1024; // 30 MB
+  const MAX_COVER_BYTES = 5 * 1024 * 1024;  // 5 MB
+  const AUDIO_TYPES = ['audio/mpeg', 'audio/mp3', 'audio/wav', 'audio/ogg', 'audio/x-wav', 'audio/webm'];
+  const COVER_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
+
+  function validateFiles(audioFile, coverFile) {
+    if (!audioFile) return 'فایل صوتی الزامی است.';
+    if (audioFile.size > MAX_AUDIO_BYTES) return 'حجم فایل صوتی حداکثر ۳۰ مگابایت است.';
+    const aType = (audioFile.type || '').toLowerCase();
+    const aName = (audioFile.name || '').toLowerCase();
+    const audioOk = AUDIO_TYPES.includes(aType) || /\.(mp3|wav|ogg|webm)$/.test(aName);
+    if (!audioOk) return 'فرمت صوتی مجاز: MP3، WAV، OGG.';
+    if (coverFile) {
+      if (coverFile.size > MAX_COVER_BYTES) return 'حجم کاور حداکثر ۵ مگابایت است.';
+      const cType = (coverFile.type || '').toLowerCase();
+      const cName = (coverFile.name || '').toLowerCase();
+      const coverOk = COVER_TYPES.includes(cType) || /\.(jpe?g|png|webp)$/.test(cName);
+      if (!coverOk) return 'فرمت کاور مجاز: JPEG، PNG، WebP.';
+    }
+    return null;
+  }
+
+  async function removeStoragePath(bucket, path) {
+    if (!supabase || !path) return;
+    try {
+      await supabase.storage.from(bucket).remove([path]);
+    } catch (e) {
+      console.warn('orphan cleanup failed', bucket, path, e);
+    }
+  }
+
   async function handleUpload(e) {
     e.preventDefault();
     if (!supabase || !state.isOwner) {
@@ -395,8 +426,13 @@
     const coverFile = $('#upCover').files[0];
     const audioFile = $('#upAudio').files[0];
 
-    if (!title || !artist || !audioFile) {
-      showMsg(els.uploadMsg, 'عنوان، هنرمند و فایل صوتی الزامی است.', 'error');
+    if (!title || !artist) {
+      showMsg(els.uploadMsg, 'عنوان و هنرمند الزامی است.', 'error');
+      return;
+    }
+    const fileErr = validateFiles(audioFile, coverFile);
+    if (fileErr) {
+      showMsg(els.uploadMsg, fileErr, 'error');
       return;
     }
 
@@ -404,22 +440,33 @@
     if (btn) btn.disabled = true;
     showMsg(els.uploadMsg, 'در حال بارگذاری...', 'info');
 
-    try {
-      const uid = state.user.id;
-      const ts = Date.now();
-      let coverUrl = null;
-      let audioUrl = null;
+    const uid = state.user.id;
+    const ts = Date.now();
+    let coverPath = null;
+    let audioPath = null;
+    let coverUrl = null;
+    let audioUrl = null;
+    let inserted = false;
 
+    try {
       if (coverFile) {
-        const path = `covers/${uid}/${ts}-${coverFile.name.replace(/[^a-zA-Z0-9._-]/g, '_')}`;
-        const { error: cErr } = await supabase.storage.from('covers').upload(path, coverFile, { upsert: false });
+        const safe = coverFile.name.replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 80);
+        coverPath = `covers/${uid}/${ts}-${safe}`;
+        const { error: cErr } = await supabase.storage.from('covers').upload(coverPath, coverFile, {
+          upsert: false,
+          contentType: coverFile.type || 'image/jpeg'
+        });
         if (cErr) throw cErr;
-        const { data: cPub } = supabase.storage.from('covers').getPublicUrl(path);
+        const { data: cPub } = supabase.storage.from('covers').getPublicUrl(coverPath);
         coverUrl = cPub?.publicUrl || null;
       }
 
-      const audioPath = `audio/${uid}/${ts}-${audioFile.name.replace(/[^a-zA-Z0-9._-]/g, '_')}`;
-      const { error: aErr } = await supabase.storage.from('audio').upload(audioPath, audioFile, { upsert: false });
+      const safeA = audioFile.name.replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 80);
+      audioPath = `audio/${uid}/${ts}-${safeA}`;
+      const { error: aErr } = await supabase.storage.from('audio').upload(audioPath, audioFile, {
+        upsert: false,
+        contentType: audioFile.type || 'audio/mpeg'
+      });
       if (aErr) throw aErr;
       const { data: aPub } = supabase.storage.from('audio').getPublicUrl(audioPath);
       audioUrl = aPub?.publicUrl;
@@ -437,11 +484,17 @@
         uploaded_by: uid
       });
       if (iErr) throw iErr;
+      inserted = true;
 
       showMsg(els.uploadMsg, 'آهنگ با موفقیت منتشر شد.', 'ok');
       els.uploadForm.reset();
       await loadCatalog();
     } catch (err) {
+      // Remove Storage objects only if the DB row was not created
+      if (!inserted) {
+        if (audioPath) await removeStoragePath('audio', audioPath);
+        if (coverPath) await removeStoragePath('covers', coverPath);
+      }
       showMsg(els.uploadMsg, err.message || 'خطا در بارگذاری', 'error');
     } finally {
       if (btn) btn.disabled = false;
@@ -474,8 +527,8 @@
       if (idx < 0) return;
       const action = e.target.closest('[data-action]')?.dataset.action;
       if (action === 'add') {
-        // Playlist add requires auth — Phase ready
-        if (!state.user) openAuth('login');
+        // Playlists are not fully implemented in the UI yet
+        alert('افزودن به پلی‌لیست هنوز فعال نشده است.');
         return;
       }
       if (state.currentIndex === idx && state.isPlaying) togglePlay();
