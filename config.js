@@ -1,9 +1,8 @@
 /**
  * MEGA MUSIC — Public configuration only
- * Replace placeholders with your Supabase project values.
  * NEVER put service-role keys or secrets here.
  */
 window.MEGA_CONFIG = {
-  supabaseUrl: '',       // e.g. 'https://xxxx.supabase.co'
-  supabaseAnonKey: ''    // e.g. public anon / publishable key
+  supabaseUrl: 'https://dwkooutnyhzsdomvcois.supabase.co',
+  supabaseAnonKey: 'sb_publishable_oMMdfp35HHwxb8YT2wqq2A_tdEGikvv'
 };
