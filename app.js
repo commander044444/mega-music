@@ -41,6 +41,8 @@
     isStaff: false,
     searchCat: 'tracks',
     authMode: 'login',
+    pendingAuth: null, // { email, password } after rate-limited signup
+    authBusy: false,
     viewingUserId: null,
     likedIds: new Set()
   };
@@ -360,11 +362,15 @@
       const p = state.profile;
       const badge = (p.is_verified || p.role === 'owner') ? verifiedBadge() : '';
       const banned = p.is_banned ? '<p class="msg msg-error">حساب شما محدود شده است.</p>' : '';
+      const emailOk = isEmailConfirmed(state.user);
+      const emailNote = emailOk
+        ? '<p class="msg msg-ok" style="margin-top:8px">ایمیل تأیید شده است.</p>'
+        : '<p class="msg msg-info" style="margin-top:8px">ایمیل هنوز تأیید نشده است (وضعیت Auth).</p>';
       $('#myProfileHeader').innerHTML = `
         <img class="profile-avatar" src="${escapeHtml(p.avatar_url || '')}" alt="" onerror="this.src=''">
         <div class="profile-name">${escapeHtml(p.display_name || p.username || '')} ${badge}</div>
         <div class="profile-handle">@${escapeHtml(p.username || '—')} · ${escapeHtml(p.role || 'user')}</div>
-        <div class="profile-bio">${escapeHtml(p.bio || '')}</div>${banned}`;
+        <div class="profile-bio">${escapeHtml(p.bio || '')}</div>${banned}${emailNote}`;
       if (state.isStaff) {
         $('#adminSection')?.classList.remove('hidden');
         loadAdmin('overview');
@@ -386,26 +392,80 @@
     }
   }
 
+
+  function isEmailRateLimitError(err) {
+    const m = String(err?.message || err || '').toLowerCase();
+    return /rate.?limit|email rate limit|over_email_send_rate_limit|429/.test(m);
+  }
+
+  function isEmailNotConfirmedError(err) {
+    const m = String(err?.message || err || '').toLowerCase();
+    return /email not confirmed|email_not_confirmed|not confirmed|confirm your email/.test(m);
+  }
+
+  function isEmailConfirmed(user) {
+    if (!user) return false;
+    return !!(user.email_confirmed_at || user.confirmed_at);
+  }
+
+  function setAuthBusy(busy) {
+    state.authBusy = busy;
+    const btn = $('#authSubmit');
+    if (btn) {
+      btn.disabled = !!busy;
+      if (busy) btn.dataset.label = btn.dataset.label || btn.textContent;
+      btn.textContent = busy ? 'لطفاً صبر کنید…' : (btn.dataset.label || (state.authMode === 'register' ? 'ثبت‌نام' : 'ورود'));
+      if (!busy && state.authMode === 'register') btn.textContent = 'ثبت‌نام';
+      if (!busy && state.authMode === 'login') btn.textContent = 'ورود';
+    }
+    const cont = $('#authContinueNoEmail');
+    if (cont) cont.disabled = !!busy;
+  }
+
+  function hideRateLimitActions() {
+    state.pendingAuth = null;
+    $('#authRateLimitActions')?.classList.add('hidden');
+  }
+
+  function showRateLimitActions(email, password) {
+    state.pendingAuth = { email, password };
+    $('#authRateLimitActions')?.classList.remove('hidden');
+  }
+
   function openAuth(mode) {
     state.authMode = mode || 'login';
     const reg = state.authMode === 'register';
     if ($('#authTitle')) $('#authTitle').textContent = reg ? 'ثبت‌نام' : 'ورود';
-    if ($('#authSubmit')) $('#authSubmit').textContent = reg ? 'ثبت‌نام' : 'ورود';
+    if ($('#authSubmit')) {
+      $('#authSubmit').textContent = reg ? 'ثبت‌نام' : 'ورود';
+      $('#authSubmit').dataset.label = reg ? 'ثبت‌نام' : 'ورود';
+    }
     if ($('#authToggle')) $('#authToggle').textContent = reg ? 'قبلاً ثبت‌نام کرده‌اید؟ ورود' : 'حساب ندارید؟ ثبت‌نام';
     if ($('#groupUsername')) $('#groupUsername').style.display = reg ? 'block' : 'none';
     if ($('#groupDisplayName')) $('#groupDisplayName').style.display = reg ? 'block' : 'none';
+    hideRateLimitActions();
     showMsg($('#authMsg'), '', 'info');
+    setAuthBusy(false);
     $('#authOverlay')?.classList.add('open');
   }
-  function closeAuth() { $('#authOverlay')?.classList.remove('open'); }
+  function closeAuth() {
+    hideRateLimitActions();
+    setAuthBusy(false);
+    $('#authOverlay')?.classList.remove('open');
+  }
 
   async function handleAuth(e) {
     e.preventDefault();
     if (!sb) { showMsg($('#authMsg'), 'Supabase پیکربندی نشده است.', 'error'); return; }
+    if (state.authBusy) return;
+
     const email = $('#authEmail').value.trim();
     const password = $('#authPassword').value;
     const username = ($('#authUsername')?.value || '').trim();
     const displayName = ($('#authDisplayName')?.value || '').trim();
+    hideRateLimitActions();
+
+    setAuthBusy(true);
     try {
       if (state.authMode === 'register') {
         if (!/^[a-zA-Z0-9_\.]{3,50}$/.test(username)) {
@@ -413,34 +473,133 @@
           return;
         }
         const { data, error } = await sb.auth.signUp({
-          email, password,
-          options: { data: { username, display_name: displayName || username } }
+          email,
+          password,
+          options: {
+            data: { username, display_name: displayName || username },
+            emailRedirectTo: location.origin + location.pathname
+          }
         });
+
         if (error) {
-          const msg = /already|registered|exists/i.test(error.message)
-            ? 'این ایمیل قبلاً ثبت شده است.'
-            : error.message;
-          throw new Error(msg);
+          if (isEmailRateLimitError(error)) {
+            showMsg(
+              $('#authMsg'),
+              'ارسال ایمیل تأیید موقتاً ممکن نیست (محدودیت نرخ ارسال). حساب ممکن است ساخته شده باشد. می‌توانید کمی صبر کنید یا «ادامه بدون تأیید ایمیل» را بزنید تا در صورت مجاز بودن تنظیمات، وارد شوید. ایمیل به‌صورت خودکار تأیید نمی‌شود.',
+              'error'
+            );
+            showRateLimitActions(email, password);
+            return;
+          }
+          if (/already|registered|exists/i.test(error.message)) {
+            throw new Error('این ایمیل قبلاً ثبت شده است.');
+          }
+          throw error;
         }
-        // ensure profile username if trigger missed meta
+
+        // Account created in Auth (and profile via trigger). Do not invent verification.
         if (data.user) {
-          await sb.from('profiles').update({
-            username,
-            display_name: displayName || username
-          }).eq('id', data.user.id);
+          try {
+            await sb.from('profiles').update({
+              username,
+              display_name: displayName || username
+            }).eq('id', data.user.id);
+          } catch (_) { /* profile may already be set; non-fatal */ }
         }
-        showMsg($('#authMsg'), 'ثبت‌نام انجام شد. در صورت نیاز ایمیل را تأیید کنید.', 'ok');
+
+        if (data.session) {
+          // Confirm email disabled or already confirmed — real session
+          showMsg($('#authMsg'), 'ثبت‌نام موفق بود. در حال ورود…', 'ok');
+          closeAuth();
+          await refreshSession();
+        } else if (data.user) {
+          showMsg(
+            $('#authMsg'),
+            'ثبت‌نام انجام شد. لطفاً ایمیل خود را برای تأیید حساب بررسی کنید. تا قبل از تأیید، وضعیت ایمیل «تأییدنشده» است.',
+            'ok'
+          );
+        } else {
+          showMsg($('#authMsg'), 'پاسخ ثبت‌نام نامشخص بود. اگر ایمیلی نیامد، بعداً دوباره تلاش کنید.', 'error');
+        }
       } else {
-        const { error } = await sb.auth.signInWithPassword({ email, password });
-        if (error) throw error;
+        const { data, error } = await sb.auth.signInWithPassword({ email, password });
+        if (error) {
+          if (isEmailNotConfirmedError(error)) {
+            throw new Error('ایمیل شما هنوز تأیید نشده است. صندوق ورودی را بررسی کنید یا بعداً دوباره تلاش کنید.');
+          }
+          if (isEmailRateLimitError(error)) {
+            throw new Error('محدودیت ارسال ایمیل فعال است. کمی بعد دوباره تلاش کنید.');
+          }
+          throw error;
+        }
+        if (!data.session) {
+          throw new Error('ورود انجام نشد. لطفاً دوباره تلاش کنید.');
+        }
         closeAuth();
         await refreshSession();
       }
     } catch (err) {
       let m = err.message || 'خطا';
       if (/duplicate|unique|username/i.test(m)) m = 'این نام کاربری قبلاً گرفته شده است.';
-      if (/already|registered/i.test(m)) m = 'این ایمیل قبلاً ثبت شده است.';
+      if (/already|registered/i.test(m) && !/تأیید/.test(m)) m = 'این ایمیل قبلاً ثبت شده است.';
+      if (/invalid login|invalid credentials|wrong password/i.test(m)) m = 'ایمیل یا رمز عبور نادرست است.';
       showMsg($('#authMsg'), m, 'error');
+    } finally {
+      setAuthBusy(false);
+    }
+  }
+
+  /** After rate-limit on signup: try sign-in without claiming email is verified */
+  async function handleContinueWithoutEmailVerify() {
+    if (!sb || !state.pendingAuth || state.authBusy) return;
+    const { email, password } = state.pendingAuth;
+    setAuthBusy(true);
+    showMsg($('#authMsg'), 'در حال تلاش برای ورود…', 'info');
+    try {
+      const { data, error } = await sb.auth.signInWithPassword({ email, password });
+      if (error) {
+        if (isEmailNotConfirmedError(error)) {
+          showMsg(
+            $('#authMsg'),
+            'ورود ممکن نیست: در پروژه Supabase تأیید ایمیل اجباری است و ایمیل تأیید به‌خاطر محدودیت نرخ ارسال نشد. صبر کنید تا محدودیت رفع شود، یا مالک پروژه «Confirm email» را در Authentication تنظیم کند. وضعیت ایمیل شما به‌صورت دستی تأیید نشده است.',
+            'error'
+          );
+          return;
+        }
+        if (isEmailRateLimitError(error)) {
+          showMsg($('#authMsg'), 'هنوز محدودیت ارسال ایمیل فعال است. لطفاً بعداً تلاش کنید.', 'error');
+          return;
+        }
+        if (/invalid login|invalid credentials/i.test(error.message)) {
+          showMsg(
+            $('#authMsg'),
+            'ورود ناموفق بود. ممکن است حساب ساخته نشده باشد. پس از رفع محدودیت، دوباره ثبت‌نام کنید.',
+            'error'
+          );
+          return;
+        }
+        throw error;
+      }
+      if (!data.session) {
+        showMsg($('#authMsg'), 'نشست فعالی ایجاد نشد.', 'error');
+        return;
+      }
+      // Session exists — email may still be unconfirmed if project allows it
+      const confirmed = isEmailConfirmed(data.session.user);
+      showMsg(
+        $('#authMsg'),
+        confirmed
+          ? 'ورود موفق بود.'
+          : 'وارد شدید. توجه: ایمیل شما هنوز توسط Supabase تأیید نشده است.',
+        'ok'
+      );
+      hideRateLimitActions();
+      closeAuth();
+      await refreshSession();
+    } catch (err) {
+      showMsg($('#authMsg'), err.message || 'خطا در ورود', 'error');
+    } finally {
+      setAuthBusy(false);
     }
   }
 
@@ -725,18 +884,23 @@
     box.innerHTML = '<div class="spinner"></div>';
     try {
       if (tab === 'overview') {
-        const [users, tracks, pending, playlists] = await Promise.all([
+        const [users, tracks, pending, playlists, verifiedBadge] = await Promise.all([
           sb.from('profiles').select('*', { count: 'exact', head: true }),
           sb.from('tracks').select('*', { count: 'exact', head: true }).eq('status', 'published'),
           sb.from('tracks').select('*', { count: 'exact', head: true }).eq('status', 'pending'),
-          sb.from('playlists').select('*', { count: 'exact', head: true })
+          sb.from('playlists').select('*', { count: 'exact', head: true }),
+          sb.from('profiles').select('*', { count: 'exact', head: true }).eq('is_verified', true)
         ]);
+        // Total registered = rows in profiles (includes email-unconfirmed Auth users once profile exists).
+        // is_verified is platform badge, NOT Supabase email_confirmed_at.
         box.innerHTML = `<div class="stat-grid">
-          <div class="stat-card"><div class="val">${users.count ?? '—'}</div><div class="lbl">کاربران</div></div>
+          <div class="stat-card"><div class="val">${users.count ?? '—'}</div><div class="lbl">کل ثبت‌نام‌ها</div></div>
+          <div class="stat-card"><div class="val">${verifiedBadge.count ?? '—'}</div><div class="lbl">نشان تأیید پلتفرم</div></div>
           <div class="stat-card"><div class="val">${tracks.count ?? '—'}</div><div class="lbl">منتشرشده</div></div>
           <div class="stat-card"><div class="val">${pending.count ?? '—'}</div><div class="lbl">در انتظار</div></div>
           <div class="stat-card"><div class="val">${playlists.count ?? '—'}</div><div class="lbl">پلی‌لیست</div></div>
-        </div>`;
+        </div>
+        <p class="msg msg-info">«کل ثبت‌نام‌ها» از جدول profiles است و به وضعیت تأیید ایمیل وابسته نیست. «نشان تأیید» با تأیید ایمیل یکی نیست.</p>`;
       } else if (tab === 'pending') {
         const { data } = await sb.from('tracks')
           .select('id, title, artist_name, status, uploaded_by, created_at, cover_url')
@@ -954,6 +1118,7 @@
     $('#authClose')?.addEventListener('click', closeAuth);
     $('#authToggle')?.addEventListener('click', () => openAuth(state.authMode === 'login' ? 'register' : 'login'));
     $('#authForm')?.addEventListener('submit', handleAuth);
+    $('#authContinueNoEmail')?.addEventListener('click', handleContinueWithoutEmailVerify);
     $('#btnLogout')?.addEventListener('click', handleLogout);
     $('#submitForm')?.addEventListener('submit', handleSubmit);
     $('#btnSubmitOpen')?.addEventListener('click', () => {
