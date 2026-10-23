@@ -659,6 +659,7 @@
   // ---------- Upload / submit ----------
   function formatBytesMB(bytes) {
     const n = Number(bytes) || 0;
+    if (n < 1024) return (n / 1024).toFixed(2);
     return (n / (1024 * 1024)).toFixed(2);
   }
 
@@ -668,44 +669,83 @@
     if (!input || !hint) return;
     const f = input.files && input.files[0];
     if (!f) { hint.textContent = ''; return; }
-    hint.textContent = `حجم انتخاب‌شده: ${formatBytesMB(f.size)} مگابایت`;
+    hint.textContent = `حجم انتخاب‌شده: ${formatBytesMB(f.size)} مگابایت (${f.name})`;
   }
 
-  function resetUploadProgressUI() {
-    const panel = $('#uploadProgressPanel');
-    panel?.classList.add('hidden');
-    ['Cover', 'Audio'].forEach(kind => {
-      const bar = $(`#uploadProg${kind}Bar`);
-      const pct = $(`#uploadProg${kind}Pct`);
-      const bytes = $(`#uploadProg${kind}Bytes`);
-      if (bar) bar.style.width = '0%';
-      if (pct) pct.textContent = '0٪';
-      if (bytes) bytes.textContent = '۰ از ۰ مگابایت';
-    });
-    $('#uploadProgCoverWrap')?.classList.add('hidden');
-    $('#uploadProgAudioWrap')?.classList.add('hidden');
-  }
-
-  function updateUploadProgress(kind, loaded, total) {
-    const panel = $('#uploadProgressPanel');
-    panel?.classList.remove('hidden');
-    const wrap = $(`#uploadProg${kind}Wrap`);
-    wrap?.classList.remove('hidden');
-    const safeTotal = total > 0 ? total : 1;
-    const percent = Math.min(100, Math.round((loaded / safeTotal) * 100));
-    const bar = $(`#uploadProg${kind}Bar`);
-    const pct = $(`#uploadProg${kind}Pct`);
-    const bytes = $(`#uploadProg${kind}Bytes`);
-    if (bar) bar.style.width = percent + '%';
-    if (pct) pct.textContent = percent + '٪';
-    if (bytes) {
-      bytes.textContent = `${formatBytesMB(loaded)} از ${formatBytesMB(total)} مگابایت`;
+  function showUploadPanel(show) {
+    const panel = document.getElementById('uploadProgressPanel');
+    if (!panel) return;
+    if (show) {
+      panel.classList.remove('hidden');
+      panel.classList.add('is-visible');
+      panel.style.display = 'flex';
+    } else {
+      panel.classList.add('hidden');
+      panel.classList.remove('is-visible');
+      panel.style.display = 'none';
     }
   }
 
+  function resetUploadProgressUI() {
+    showUploadPanel(false);
+    ['Cover', 'Audio'].forEach(kind => {
+      const wrap = document.getElementById('uploadProg' + kind + 'Wrap');
+      const bar = document.getElementById('uploadProg' + kind + 'Bar');
+      const pct = document.getElementById('uploadProg' + kind + 'Pct');
+      const bytes = document.getElementById('uploadProg' + kind + 'Bytes');
+      if (wrap) { wrap.style.display = 'none'; wrap.classList.add('hidden'); }
+      if (bar) {
+        bar.style.width = '0%';
+        bar.classList.remove('indeterminate');
+      }
+      if (pct) pct.textContent = '0%';
+      if (bytes) bytes.textContent = '0.00 از 0.00 مگابایت';
+    });
+  }
+
+  function updateUploadProgress(kind, loaded, total, extraLabel) {
+    showUploadPanel(true);
+    const wrap = document.getElementById('uploadProg' + kind + 'Wrap');
+    const bar = document.getElementById('uploadProg' + kind + 'Bar');
+    const pctEl = document.getElementById('uploadProg' + kind + 'Pct');
+    const bytesEl = document.getElementById('uploadProg' + kind + 'Bytes');
+    if (wrap) {
+      wrap.classList.remove('hidden');
+      wrap.style.display = 'block';
+    }
+    const tot = total > 0 ? total : 1;
+    const ld = Math.max(0, Math.min(loaded, tot));
+    const percent = Math.min(100, Math.round((ld / tot) * 100));
+    if (bar) {
+      bar.classList.remove('indeterminate');
+      bar.style.width = percent + '%';
+    }
+    if (pctEl) pctEl.textContent = percent + '%';
+    if (bytesEl) {
+      const label = extraLabel ? (' · ' + extraLabel) : '';
+      bytesEl.textContent = formatBytesMB(ld) + ' از ' + formatBytesMB(total) + ' مگابایت' + label;
+    }
+  }
+
+  function setIndeterminate(kind, total) {
+    showUploadPanel(true);
+    const wrap = document.getElementById('uploadProg' + kind + 'Wrap');
+    const bar = document.getElementById('uploadProg' + kind + 'Bar');
+    const pctEl = document.getElementById('uploadProg' + kind + 'Pct');
+    const bytesEl = document.getElementById('uploadProg' + kind + 'Bytes');
+    if (wrap) { wrap.classList.remove('hidden'); wrap.style.display = 'block'; }
+    if (bar) {
+      bar.classList.add('indeterminate');
+      bar.style.width = '40%';
+    }
+    if (pctEl) pctEl.textContent = '…';
+    if (bytesEl) bytesEl.textContent = 'در حال ارسال · حجم کل ' + formatBytesMB(total) + ' مگابایت';
+  }
+
   /**
-   * Upload via XHR so we can report progress (Supabase storage REST).
-   * Same auth as JS client: Bearer session + apikey anon.
+   * Upload with progress via XHR.
+   * Some browsers only fire progress at the end; we also run a gentle estimate
+   * until the first real progress event, then switch to real numbers.
    */
   async function uploadWithProgress(bucket, path, file, contentType, onProgress) {
     const base = (window.MEGA_CONFIG && window.MEGA_CONFIG.supabaseUrl || '').replace(/\/$/, '');
@@ -714,52 +754,115 @@
 
     const { data: sessData, error: sessErr } = await sb.auth.getSession();
     if (sessErr) throw sessErr;
-    const token = sessData?.session?.access_token;
+    const token = sessData && sessData.session && sessData.session.access_token;
     if (!token) throw new Error('نشست معتبر نیست. دوباره وارد شوید.');
 
-    const url = `${base}/storage/v1/object/${encodeURIComponent(bucket)}/${path.split('/').map(encodeURIComponent).join('/')}`;
+    // Path as-is with encoded segments (Supabase Storage REST)
+    const encodedPath = String(path).split('/').map(encodeURIComponent).join('/');
+    const url = base + '/storage/v1/object/' + encodeURIComponent(bucket) + '/' + encodedPath;
 
     return new Promise((resolve, reject) => {
       const xhr = new XMLHttpRequest();
+      let gotRealProgress = false;
+      let finished = false;
+      const startedAt = Date.now();
+      // Rough estimate ~400 KB/s so bar moves even without browser events
+      const estBps = 400 * 1024;
+
+      const tick = setInterval(() => {
+        if (finished || gotRealProgress) return;
+        const elapsed = (Date.now() - startedAt) / 1000;
+        const estLoaded = Math.min(file.size * 0.92, elapsed * estBps);
+        if (typeof onProgress === 'function') {
+          onProgress({ loaded: estLoaded, total: file.size, percent: Math.round((estLoaded / file.size) * 100), estimated: true });
+        }
+      }, 250);
+
       xhr.open('POST', url, true);
-      xhr.setRequestHeader('Authorization', `Bearer ${token}`);
+      xhr.responseType = 'text';
+      xhr.setRequestHeader('Authorization', 'Bearer ' + token);
       xhr.setRequestHeader('apikey', anon);
       xhr.setRequestHeader('x-upsert', 'false');
-      xhr.setRequestHeader('Content-Type', contentType || file.type || 'application/octet-stream');
-      xhr.upload.onprogress = (e) => {
-        if (typeof onProgress === 'function') {
-          const total = e.lengthComputable ? e.total : file.size;
-          const loaded = e.loaded || 0;
-          onProgress({ loaded, total: total || file.size, percent: total ? Math.round((loaded / total) * 100) : 0 });
+      // Let browser set Content-Type from Blob when possible — still set mime
+      const mime = contentType || file.type || 'application/octet-stream';
+      xhr.setRequestHeader('Content-Type', mime);
+      xhr.setRequestHeader('cache-control', 'max-age=3600');
+
+      if (typeof onProgress === 'function') {
+        onProgress({ loaded: 0, total: file.size, percent: 0 });
+      }
+
+      xhr.upload.onloadstart = function () {
+        if (!gotRealProgress && typeof onProgress === 'function') {
+          onProgress({ loaded: 0, total: file.size, percent: 0 });
         }
       };
-      xhr.onload = () => {
+
+      xhr.upload.onprogress = function (e) {
+        gotRealProgress = true;
+        if (typeof onProgress === 'function') {
+          const total = (e.lengthComputable && e.total) ? e.total : file.size;
+          const loaded = e.loaded || 0;
+          onProgress({
+            loaded: loaded,
+            total: total,
+            percent: total ? Math.round((loaded / total) * 100) : 0,
+            estimated: false
+          });
+        }
+      };
+
+      xhr.upload.onload = function () {
+        gotRealProgress = true;
+        if (typeof onProgress === 'function') {
+          onProgress({ loaded: file.size, total: file.size, percent: 100 });
+        }
+      };
+
+      xhr.onload = function () {
+        finished = true;
+        clearInterval(tick);
         if (xhr.status >= 200 && xhr.status < 300) {
           if (typeof onProgress === 'function') {
             onProgress({ loaded: file.size, total: file.size, percent: 100 });
           }
           try {
             resolve(xhr.responseText ? JSON.parse(xhr.responseText) : {});
-          } catch {
+          } catch (err) {
             resolve({});
           }
         } else {
-          let msg = `آپلود ناموفق (${xhr.status})`;
+          let msg = 'آپلود ناموفق (' + xhr.status + ')';
           try {
-            const j = JSON.parse(xhr.responseText);
+            const j = JSON.parse(xhr.responseText || '{}');
             msg = j.message || j.error || j.msg || msg;
-          } catch {
-            if (xhr.responseText) msg = xhr.responseText.slice(0, 200);
+          } catch (err2) {
+            if (xhr.responseText) msg = String(xhr.responseText).slice(0, 240);
           }
           reject(new Error(msg));
         }
       };
-      xhr.onerror = () => reject(new Error('خطای شبکه هنگام آپلود'));
-      xhr.onabort = () => reject(new Error('آپلود لغو شد'));
-      xhr.send(file);
+
+      xhr.onerror = function () {
+        finished = true;
+        clearInterval(tick);
+        reject(new Error('خطای شبکه هنگام آپلود'));
+      };
+      xhr.onabort = function () {
+        finished = true;
+        clearInterval(tick);
+        reject(new Error('آپلود لغو شد'));
+      };
+
+      try {
+        xhr.send(file);
+      } catch (sendErr) {
+        finished = true;
+        clearInterval(tick);
+        reject(sendErr);
+      }
     });
   }
-
 
   function validateFiles(audioFile, coverFile) {
     if (!audioFile) return 'فایل صوتی الزامی است.';
@@ -799,7 +902,10 @@
     const btn = $('#btnDoSubmit');
     if (btn) btn.disabled = true;
     resetUploadProgressUI();
+    showUploadPanel(true);
     showMsg($('#submitMsg'), 'در حال بارگذاری فایل‌ها…', 'info');
+    // Force panel paint before network work
+    try { document.getElementById('uploadProgressPanel')?.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); } catch (_) {}
 
     const uid = state.user.id;
     const ts = Date.now();
@@ -843,8 +949,12 @@
       });
       if (iErr) throw iErr;
       inserted = true;
+      updateUploadProgress('Audio', audioFile.size, audioFile.size);
       showMsg($('#submitMsg'), status === 'published' ? 'آهنگ منتشر شد.' : 'ارسال شد و در انتظار بررسی است.', 'ok');
+      await new Promise(r => setTimeout(r, 600));
       $('#submitForm').reset();
+      setFileSizeHint('#subCover', '#subCoverSize');
+      setFileSizeHint('#subAudio', '#subAudioSize');
       if (status === 'published') await loadCatalog();
     } catch (err) {
       if (!inserted) {
