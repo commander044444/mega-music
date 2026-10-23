@@ -97,10 +97,10 @@ $$;
 
 -- ---------------------------------------------------------------------------
 -- CRITICAL: block privilege fields on profile UPDATE
--- - Non-staff: cannot change role, is_verified, is_banned, banned_until, ban_reason, id
--- - Staff: may change verification/ban fields, but NEVER role or id via client
--- - Staff who are not owner: cannot alter owner row's privileged fields
--- Role promotion remains SQL Editor / service role only.
+-- - Non-owner: cannot change role, is_verified, is_banned, banned_until, ban_reason, id
+-- - Owner only: may change is_verified / ban fields (never role/id via client)
+-- - Role promotion remains SQL Editor / service role only.
+-- - Track moderation (status, reviewed_*) remains staff (admin or owner).
 -- ---------------------------------------------------------------------------
 CREATE OR REPLACE FUNCTION public.protect_profile_privileged_fields()
 RETURNS TRIGGER
@@ -109,35 +109,28 @@ SECURITY DEFINER
 SET search_path = public
 AS $$
 DECLARE
-  staff boolean;
   owner_actor boolean;
 BEGIN
-  -- id immutable for everyone (including staff via client)
+  -- Always return NEW on success (required for BEFORE UPDATE triggers).
   IF NEW.id IS DISTINCT FROM OLD.id THEN
     RAISE EXCEPTION 'profile id cannot be changed';
   END IF;
 
-  -- role immutable for everyone via client (SQL Editor / table owner only)
+  -- role is never changeable via client (SQL Editor / superuser only)
   IF NEW.role IS DISTINCT FROM OLD.role THEN
     RAISE EXCEPTION 'role can only be changed by a database administrator (SQL Editor / service role)';
   END IF;
 
-  staff := public.is_staff();
   owner_actor := public.is_owner();
 
-  -- Verification + ban fields
+  -- Verification and ban fields: OWNER ONLY (not admin/staff)
   IF NEW.is_verified IS DISTINCT FROM OLD.is_verified
      OR NEW.is_banned IS DISTINCT FROM OLD.is_banned
      OR NEW.banned_until IS DISTINCT FROM OLD.banned_until
      OR NEW.ban_reason IS DISTINCT FROM OLD.ban_reason THEN
 
-    IF NOT staff THEN
-      RAISE EXCEPTION 'verification and ban fields can only be changed by authorized staff';
-    END IF;
-
-    -- Non-owner staff cannot modify the owner account's privileged fields
-    IF OLD.role = 'owner' AND NOT owner_actor THEN
-      RAISE EXCEPTION 'administrators cannot change verification or ban fields on the owner account';
+    IF NOT owner_actor THEN
+      RAISE EXCEPTION 'verification and ban fields can only be changed by the owner';
     END IF;
   END IF;
 
@@ -165,9 +158,10 @@ SECURITY DEFINER
 SET search_path = public
 AS $$
 DECLARE
-  staff boolean;
   owner_actor boolean;
 BEGIN
+  -- Full standalone body (does not call other trigger functions).
+  -- Not attached as a trigger after this migration; kept for name compatibility.
   IF NEW.id IS DISTINCT FROM OLD.id THEN
     RAISE EXCEPTION 'profile id cannot be changed';
   END IF;
@@ -175,18 +169,14 @@ BEGIN
     RAISE EXCEPTION 'role can only be changed by a database administrator (SQL Editor / service role)';
   END IF;
 
-  staff := public.is_staff();
   owner_actor := public.is_owner();
 
   IF NEW.is_verified IS DISTINCT FROM OLD.is_verified
      OR NEW.is_banned IS DISTINCT FROM OLD.is_banned
      OR NEW.banned_until IS DISTINCT FROM OLD.banned_until
      OR NEW.ban_reason IS DISTINCT FROM OLD.ban_reason THEN
-    IF NOT staff THEN
-      RAISE EXCEPTION 'verification and ban fields can only be changed by authorized staff';
-    END IF;
-    IF OLD.role = 'owner' AND NOT owner_actor THEN
-      RAISE EXCEPTION 'administrators cannot change verification or ban fields on the owner account';
+    IF NOT owner_actor THEN
+      RAISE EXCEPTION 'verification and ban fields can only be changed by the owner';
     END IF;
   END IF;
 
@@ -464,11 +454,21 @@ CREATE POLICY "profiles_update_own" ON public.profiles
   USING (auth.uid() = id AND NOT public.is_banned_user(auth.uid()))
   WITH CHECK (auth.uid() = id);
 
--- Staff may UPDATE any profile row for ban/verify (role still blocked by trigger)
+-- Staff may UPDATE profile rows; ban/verify changes still require is_owner() in the trigger.
 CREATE POLICY "profiles_staff_update" ON public.profiles
   FOR UPDATE
   USING (public.is_staff())
   WITH CHECK (public.is_staff());
+
+
+-- Banned users cannot like
+DROP POLICY IF EXISTS "likes_own" ON public.likes;
+CREATE POLICY "likes_own_select" ON public.likes
+  FOR SELECT USING (user_id = auth.uid());
+CREATE POLICY "likes_own_insert" ON public.likes
+  FOR INSERT WITH CHECK (user_id = auth.uid() AND NOT public.is_banned_user(auth.uid()));
+CREATE POLICY "likes_own_delete" ON public.likes
+  FOR DELETE USING (user_id = auth.uid());
 
 -- ---------------------------------------------------------------------------
 -- Audit insert for staff
@@ -479,11 +479,11 @@ CREATE POLICY "audit_insert_staff" ON public.audit_logs
   WITH CHECK (public.is_staff() AND actor_id = auth.uid());
 
 COMMENT ON COLUMN public.profiles.is_verified IS
-  'Trusted verification badge; only staff via client or SQL Editor may set. Enforced by protect_profile_privileged_fields.';
+  'Trusted verification badge; only the owner may set via client; role never via client. Enforced by protect_profile_privileged_fields.';
 COMMENT ON COLUMN public.profiles.is_banned IS
-  'Ban flag; only staff may set. Regular profile UPDATE cannot change this column.';
+  'Ban flag; only the owner may set via client. Regular users cannot change this column.';
 COMMENT ON FUNCTION public.protect_profile_privileged_fields() IS
-  'BEFORE UPDATE on profiles: locks id/role always; locks verify/ban fields unless is_staff(); non-owner staff cannot alter owner privileged fields.';
+  'BEFORE UPDATE on profiles: locks id/role always; locks verify/ban fields unless is_owner(); role/id always locked for clients.';
 
 -- ---------------------------------------------------------------------------
 -- Re-run notes
@@ -491,3 +491,23 @@ COMMENT ON FUNCTION public.protect_profile_privileged_fields() IS
 -- This file is written to be re-executable. Re-running refreshes functions,
 -- triggers, and policies without wiping data. Owner verification UPDATE is
 -- idempotent. No demo rows are inserted.
+
+
+-- =============================================================================
+-- POST-MIGRATION VERIFICATION (run manually in SQL Editor; read-only checks)
+-- =============================================================================
+-- SELECT tgname FROM pg_trigger WHERE tgrelid = 'public.profiles'::regclass AND NOT tgisinternal;
+-- Expect: protect_profile_privileged_fields_trg (not protect_profile_role_trg)
+--
+-- SELECT tgname FROM pg_trigger WHERE tgrelid = 'public.tracks'::regclass AND NOT tgisinternal;
+-- Expect: protect_track_moderation_trg
+--
+-- SELECT polname FROM pg_policy WHERE polrelid = 'public.tracks'::regclass;
+-- Expect: tracks_insert_auth, tracks_update_own_pending, tracks_update_staff, ...
+--
+-- Role matrix (expected):
+-- anon: select published tracks only; no inserts
+-- user: insert tracks status=pending only; cannot set published/reviewed_*
+-- banned: no track insert, no follow insert, no like insert, no profile update
+-- admin (non-owner): moderate tracks; CANNOT set is_verified/is_banned
+-- owner: ban/verify; publish; official playlists; all staff powers

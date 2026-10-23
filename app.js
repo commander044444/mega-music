@@ -764,8 +764,8 @@
             ${u.is_verified ? verifiedBadge() : ''}
             ${u.is_banned ? '<span class="status-pill status-rejected">مسدود</span>' : ''}
             <div class="actions">
-              ${u.role !== 'owner' ? `<button type="button" class="btn btn-ghost btn-sm" data-ban="${u.id}" data-banned="${u.is_banned}">${u.is_banned ? 'رفع مسدودیت' : 'مسدود'}</button>` : ''}
-              ${u.role !== 'owner' ? `<button type="button" class="btn btn-ghost btn-sm" data-verify="${u.id}" data-v="${u.is_verified}">${u.is_verified ? 'لغو تأیید' : 'تأیید'}</button>` : ''}
+              ${state.isOwner && u.role !== 'owner' ? `<button type="button" class="btn btn-ghost btn-sm" data-ban="${u.id}" data-banned="${u.is_banned}">${u.is_banned ? 'رفع مسدودیت' : 'مسدود'}</button>` : ''}
+              ${state.isOwner && u.role !== 'owner' ? `<button type="button" class="btn btn-ghost btn-sm" data-verify="${u.id}" data-v="${u.is_verified}">${u.is_verified ? 'لغو تأیید' : 'تأیید'}</button>` : ''}
             </div>
           </div>`).join('')}</div>`;
       } else if (tab === 'tracks') {

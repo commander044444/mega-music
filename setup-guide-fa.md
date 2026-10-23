@@ -1,66 +1,64 @@
-# راهنمای راه‌اندازی MEGA MUSIC (نسخه اجتماعی)
+# راهنمای راه‌اندازی و امنیت MEGA MUSIC
 
-## امنیت فیلدهای پروفایل (مهم)
+## ترتیب اجرا
 
-پس از اجرای `migration-001-social.sql`:
+1. اگر هنوز اجرا نشده: `supabase-schema.sql`
+2. سپس **حتماً**: `migration-001-social.sql` (قابل اجرای مجدد)
 
-- کاربر عادی می‌تواند فقط فیلدهای معمولی را عوض کند: `username`, `display_name`, `bio`, `avatar_url`.
-- تغییر `role`, `is_verified`, `is_banned`, `banned_until`, `ban_reason` توسط کلاینت **مسدود** است (تریگر دیتابیس).
-- مالک/ادمین می‌توانند تأیید و مسدودیت را از پنل مدیریت تنظیم کنند؛ تغییر `role` همچنان فقط از SQL Editor است.
-- ادمین غیرمالک نمی‌تواند فیلدهای محافظت‌شدهٔ حساب `owner` را تغییر دهد.
-- ساخت پلی‌لیست با `is_official = true` فقط برای مالک مجاز است.
-- کاربر عادی فقط با `status = pending` می‌تواند آهنگ درج کند؛ انتشار فقط توسط staff.
-- فیلدهای `reviewed_by`، `reviewed_at` و `moderation_note` فقط توسط staff قابل تغییرند (تریگر tracks).
+Migration جدول‌ها را حذف نمی‌کند و حساب مالک و داده‌های موجود را حفظ می‌کند.
 
+## پیش‌نیاز
 
-Migration قابل اجرای مجدد است و داده را پاک نمی‌کند.
+- باکت‌های Storage: `covers` و `audio`
+- در `config.js` فقط Project URL و کلید **anon**
+- Site URL / Redirect در Auth = آدرس GitHub Pages
 
-## ترتیب اجرای SQL
+## چه کسی چه کاری می‌تواند بکند
 
-1. اگر هنوز اجرا نشده: کل `supabase-schema.sql`
-2. سپس حتماً: `migration-001-social.sql`
+| عمل | مهمان | کاربر | مسدود | ادمین (غیرمالک) | مالک |
+|-----|-------|-------|-------|------------------|------|
+| دیدن آهنگ published | بله | بله | بله | بله | بله |
+| ارسال آهنگ pending | خیر | بله | خیر | بله | بله |
+| انتشار مستقیم | خیر | خیر | خیر | بله* | بله |
+| تغییر reviewed_* / moderation_note | خیر | خیر | خیر | بله | بله |
+| ویرایش username/bio خود | خیر | بله | خیر | بله | بله |
+| تغییر is_verified / is_banned | خیر | خیر | خیر | **خیر** | **بله** |
+| تغییر role | خیر | خیر | خیر | خیر | فقط SQL Editor |
+| پلی‌لیست عادی | خیر | بله | خیر† | بله | بله |
+| پلی‌لیست رسمی (is_official) | خیر | خیر | خیر | خیر | بله |
+| دنبال کردن | خیر | بله | خیر | بله | بله |
+| آپلود Storage در پوشه خود | خیر | بله | خیر | بله | بله |
 
-Migration جدول‌ها را حذف نمی‌کند و دادهٔ مالک/آهنگ‌های موجود را حفظ می‌کند.
+\* ادمین از طریق سیاست staff و تریگر moderation  
+† کاربر مسدود: insert follow/like/track و update پروفایل مسدود است
 
-## Auth URL در Supabase
+## تأیید بعد از Migration (فقط خواندنی)
 
-Authentication → URL Configuration:
+```sql
+-- باید protect_profile_privileged_fields_trg باشد (نه protect_profile_role_trg)
+SELECT tgname FROM pg_trigger
+WHERE tgrelid = 'public.profiles'::regclass AND NOT tgisinternal;
 
-- **Site URL:** `https://commander044444.github.io/mega-music/`
-- **Redirect URLs:** همان آدرس (+ در صورت نیاز localhost)
+SELECT tgname FROM pg_trigger
+WHERE tgrelid = 'public.tracks'::regclass AND NOT tgisinternal;
 
-برای بازیابی رمز، `resetPasswordForEmail` با همین redirect کار می‌کند. پس از کلیک روی لینک ایمیل، فرم «رمز جدید» در سایت باز می‌شود.
+SELECT polname FROM pg_policy WHERE polrelid = 'public.tracks'::regclass;
+```
 
-## Storage
+## تست‌های پیشنهادی در پروژهٔ آزمایشی (نه production)
 
-باکت‌های `covers` و `audio` باید وجود داشته باشند.
+به‌عنوان کاربر عادی:
 
-- خواندن عمومی برای پخش
-- نوشتن: کاربر احرازهویت‌شده در مسیر مربوط به `uid` خودش، یا مالک
+```sql
+-- باید خطا بدهد
+UPDATE public.profiles SET is_verified = true WHERE id = auth.uid();
+UPDATE public.profiles SET is_banned = true WHERE id = auth.uid();
+UPDATE public.profiles SET role = 'owner' WHERE id = auth.uid();
+```
 
-**توجه:** با خواندن عمومی، پرچم `is_downloadable` فقط متادیتاست و جلوی دانلود URL را نمی‌گیرد.
+ارسال آهنگ با `status = 'published'` توسط کاربر عادی باید توسط RLS رد شود.
 
-## نقش‌ها
+## محدودیت‌ها
 
-- کاربر عادی: ارسال با وضعیت `pending`
-- مالک/ادمین: انتشار، رد، مسدود، تأیید نشان
-- تغییر `role` فقط از SQL Editor (تریگر کلاینت را مسدود می‌کند)
-- مالک فعلی را حذف یا ریست نکنید
-
-## تست‌های پیشنهادی
-
-| سناریو | انتظار |
-|--------|--------|
-| مهمان | فقط published؛ بدون ارسال |
-| ثبت‌نام ایمیل تکراری | پیام فارسی خطا |
-| ارسال کاربر عادی | status=pending در دیتابیس |
-| تلاش publish مستقیم API توسط user | رد توسط RLS |
-| مالک | انتشار مستقیم + پنل مدیریت |
-| مسدود کردن کاربر | عدم امکان ارسال |
-| نشان تأیید | فقط از پنل staff |
-
-## محدودیت‌های صادقانه
-
-- دانلود محدود فنی بدون signed URL پیاده نشده
-- همگام‌سازی زمان‌بندی‌شدهٔ متن آهنگ (karaoke) نیست
-- آمار Storage دقیق از API رایگان همیشه در دسترس نیست
+- باکت audio در صورت public بودن، URL قابل دانلود است؛ `is_downloadable` فقط متادیتاست.
+- محیط PostgreSQL محلی در CI این مخزن اجرا نشده؛ تست‌های نقش را در پروژه disposable خود اجرا کنید.
