@@ -1,49 +1,47 @@
-# MEGA MUSIC — Phase 1
+# MEGA MUSIC
 
-Premium black-and-red music discovery UI with glassmorphism, functional local player, and search.
+Premium dark / red music platform inspired by a reference mobile UI.  
+**Catalog starts completely empty** — no demo tracks, no sample audio.
 
-**Live (GitHub Pages):** https://commander044444.github.io/mega-music/
+- **Repository:** https://github.com/commander044444/mega-music  
+- **Live (GitHub Pages):** https://commander044444.github.io/mega-music/
 
-## Phase 1 features
+## Phase status
 
-- Responsive glassmorphism interface (black / deep red)
-- Custom SVG logo, favicon, and control icons
-- Persian RTL layout + English content support
-- Track grid with artwork, title, artist
-- Live search by title / artist / album / tags (local catalog)
-- Persistent bottom player: play/pause, prev/next, seek, volume
-- Single shared `<audio>` element
-- Config placeholder for future Supabase connection
+- Reference-aligned UI (list cards, bottom nav, red clef, glows)
+- Empty catalog by design
+- Search, player, auth UI, owner upload form
+- Supabase-ready (config + SQL schema)
+- Flat root structure for GitHub Pages
 
-## Local demo catalog
+## Quick start
 
-Phase 1 ships with a small local dataset and sample audio from SoundHelix (demo use).  
-Search for e.g. `پیشرو` or `Neon` to filter results.
+1. Open the live site — you will see the empty state «هنوز آهنگی اضافه نشده».
+2. Create a Supabase project.
+3. Run `supabase-schema.sql` in the SQL Editor.
+4. Create Storage buckets: `covers` (public) and `audio` (public or signed as needed).
+5. Put your project URL and **anon** key in `config.js`.
+6. Sign up once, then promote that user to `owner` in SQL (see setup guide).
+7. Log in → More → upload the first real track.
 
-## Setup (Phase 1)
+See **setup-guide-fa.md** for full Persian instructions.
 
-1. Open the site on GitHub Pages or serve the root folder with any static server.
-2. Optional: edit `config.js` and set your public Supabase URL + anon key (no effect until Phase 2).
+## Structure (all at repository root)
 
-No build step. No Node.js required.
+```
+index.html  styles.css  app.js  config.js
+logo.svg  icons.svg  favicon.svg
+supabase-schema.sql  README.md  setup-guide-fa.md
+```
 
-## Repository structure (flat)
+No subdirectories. No build step.
 
-All files live at the repository root for GitHub Pages:
+## Security notes
 
-- `index.html`
-- `styles.css`
-- `app.js`
-- `config.js`
-- `logo.svg`
-- `icons.svg`
-- `favicon.svg`
-- `README.md`
-
-## Next phase (recommended)
-
-Phase 2: Connect real Supabase catalog, authentication, playlists, and storage.
+- Only the public anon key belongs in `config.js`.
+- Roles are enforced with RLS; the browser never decides privileges.
+- First owner is set manually via SQL — visitors cannot self-promote.
 
 ## License
 
-Demo project. Sample audio is for development only; replace with properly licensed content for production.
+Application code for this demo project. Add only music you have rights to publish.
