@@ -1,6 +1,8 @@
 -- MEGA MUSIC — Supabase schema (secure, no seed data)
 -- Run once in Supabase SQL Editor (Dashboard → SQL).
 -- Catalog starts empty. Do not insert demo tracks.
+-- After this file, always run migration-001-social.sql.
+-- If you re-run this base file later, re-run migration-001-social.sql immediately after.
 
 -- =============================================================================
 -- Types

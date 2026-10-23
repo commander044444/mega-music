@@ -2,6 +2,8 @@
 -- Run AFTER base supabase-schema.sql has been applied at least once.
 -- Safe to re-run: uses IF NOT EXISTS, DROP POLICY IF EXISTS, CREATE OR REPLACE.
 -- Does NOT drop tables or delete data. Preserves owner and existing tracks.
+-- IMPORTANT: Do not re-run supabase-schema.sql after this migration without
+-- re-running this file afterward (base schema can recreate weaker policies/triggers).
 --
 -- SECURITY (this revision):
 -- Regular users may update only ordinary profile fields (username, display_name,
@@ -121,6 +123,10 @@ BEGIN
     RAISE EXCEPTION 'role can only be changed by a database administrator (SQL Editor / service role)';
   END IF;
 
+  IF NEW.created_at IS DISTINCT FROM OLD.created_at THEN
+    RAISE EXCEPTION 'created_at cannot be changed';
+  END IF;
+
   owner_actor := public.is_owner();
 
   -- Verification and ban fields: OWNER ONLY (not admin/staff)
@@ -167,6 +173,10 @@ BEGIN
   END IF;
   IF NEW.role IS DISTINCT FROM OLD.role THEN
     RAISE EXCEPTION 'role can only be changed by a database administrator (SQL Editor / service role)';
+  END IF;
+
+  IF NEW.created_at IS DISTINCT FROM OLD.created_at THEN
+    RAISE EXCEPTION 'created_at cannot be changed';
   END IF;
 
   owner_actor := public.is_owner();
@@ -278,15 +288,21 @@ CREATE POLICY "playlists_insert_own" ON public.playlists
 
 CREATE POLICY "playlists_update_own" ON public.playlists
   FOR UPDATE
-  USING (user_id = auth.uid() OR public.is_owner())
+  USING (
+    (user_id = auth.uid() AND NOT public.is_banned_user(auth.uid()))
+    OR public.is_owner()
+  )
   WITH CHECK (
-    (user_id = auth.uid() OR public.is_owner())
+    ((user_id = auth.uid() AND NOT public.is_banned_user(auth.uid())) OR public.is_owner())
     AND (is_official IS NOT TRUE OR public.is_owner())
   );
 
 CREATE POLICY "playlists_delete_own" ON public.playlists
   FOR DELETE
-  USING (user_id = auth.uid() OR public.is_owner());
+  USING (
+    (user_id = auth.uid() AND NOT public.is_banned_user(auth.uid()))
+    OR public.is_owner()
+  );
 
 -- ---------------------------------------------------------------------------
 -- Tracks: moderation metadata
@@ -386,17 +402,39 @@ CREATE POLICY "tracks_update_staff" ON public.tracks
   WITH CHECK (public.is_staff());
 
 -- ---------------------------------------------------------------------------
--- Storage: auth users upload under own uid path; owner unrestricted
+-- Storage: replace known project policies; recreate intended set
+-- Intended model:
+--   SELECT: public read on covers + audio (required for GitHub Pages player)
+--   INSERT: owner OR path under auth.uid(); banned cannot upload
+--   UPDATE: owner only (prevents path move / overwrite by non-owners)
+--   DELETE: owner OR own uid path (banned may delete own objects for cleanup)
+-- Public read means URLs are reachable without auth; is_downloadable is metadata only.
 -- ---------------------------------------------------------------------------
+DROP POLICY IF EXISTS "mega_covers_public_read" ON storage.objects;
+DROP POLICY IF EXISTS "mega_audio_public_read" ON storage.objects;
 DROP POLICY IF EXISTS "mega_covers_owner_insert" ON storage.objects;
 DROP POLICY IF EXISTS "mega_audio_owner_insert" ON storage.objects;
+DROP POLICY IF EXISTS "mega_covers_owner_update" ON storage.objects;
+DROP POLICY IF EXISTS "mega_audio_owner_update" ON storage.objects;
+DROP POLICY IF EXISTS "mega_covers_owner_delete" ON storage.objects;
+DROP POLICY IF EXISTS "mega_audio_owner_delete" ON storage.objects;
 DROP POLICY IF EXISTS "mega_covers_user_insert" ON storage.objects;
 DROP POLICY IF EXISTS "mega_audio_user_insert" ON storage.objects;
 DROP POLICY IF EXISTS "mega_covers_user_delete" ON storage.objects;
 DROP POLICY IF EXISTS "mega_audio_user_delete" ON storage.objects;
+DROP POLICY IF EXISTS "mega_covers_user_update" ON storage.objects;
+DROP POLICY IF EXISTS "mega_audio_user_update" ON storage.objects;
 
-CREATE POLICY "mega_covers_user_insert" ON storage.objects
-  FOR INSERT TO authenticated
+CREATE POLICY "mega_covers_public_read"
+  ON storage.objects FOR SELECT
+  USING (bucket_id = 'covers');
+
+CREATE POLICY "mega_audio_public_read"
+  ON storage.objects FOR SELECT
+  USING (bucket_id = 'audio');
+
+CREATE POLICY "mega_covers_user_insert"
+  ON storage.objects FOR INSERT TO authenticated
   WITH CHECK (
     bucket_id = 'covers'
     AND NOT public.is_banned_user(auth.uid())
@@ -407,8 +445,8 @@ CREATE POLICY "mega_covers_user_insert" ON storage.objects
     )
   );
 
-CREATE POLICY "mega_audio_user_insert" ON storage.objects
-  FOR INSERT TO authenticated
+CREATE POLICY "mega_audio_user_insert"
+  ON storage.objects FOR INSERT TO authenticated
   WITH CHECK (
     bucket_id = 'audio'
     AND NOT public.is_banned_user(auth.uid())
@@ -419,8 +457,19 @@ CREATE POLICY "mega_audio_user_insert" ON storage.objects
     )
   );
 
-CREATE POLICY "mega_covers_user_delete" ON storage.objects
-  FOR DELETE TO authenticated
+-- UPDATE: owner only (blocks non-owner path moves / overwrites)
+CREATE POLICY "mega_covers_owner_update"
+  ON storage.objects FOR UPDATE TO authenticated
+  USING (bucket_id = 'covers' AND public.is_owner())
+  WITH CHECK (bucket_id = 'covers' AND public.is_owner());
+
+CREATE POLICY "mega_audio_owner_update"
+  ON storage.objects FOR UPDATE TO authenticated
+  USING (bucket_id = 'audio' AND public.is_owner())
+  WITH CHECK (bucket_id = 'audio' AND public.is_owner());
+
+CREATE POLICY "mega_covers_user_delete"
+  ON storage.objects FOR DELETE TO authenticated
   USING (
     bucket_id = 'covers'
     AND (
@@ -430,8 +479,8 @@ CREATE POLICY "mega_covers_user_delete" ON storage.objects
     )
   );
 
-CREATE POLICY "mega_audio_user_delete" ON storage.objects
-  FOR DELETE TO authenticated
+CREATE POLICY "mega_audio_user_delete"
+  ON storage.objects FOR DELETE TO authenticated
   USING (
     bucket_id = 'audio'
     AND (
@@ -473,6 +522,18 @@ CREATE POLICY "likes_own_delete" ON public.likes
 -- ---------------------------------------------------------------------------
 -- Audit insert for staff
 -- ---------------------------------------------------------------------------
+
+-- Listening history / downloads: banned users cannot write new events
+DROP POLICY IF EXISTS "history_own" ON public.listening_history;
+CREATE POLICY "history_own_select" ON public.listening_history
+  FOR SELECT USING (user_id = auth.uid());
+CREATE POLICY "history_own_insert" ON public.listening_history
+  FOR INSERT WITH CHECK (user_id = auth.uid() AND NOT public.is_banned_user(auth.uid()));
+
+DROP POLICY IF EXISTS "download_events_insert_own" ON public.download_events;
+CREATE POLICY "download_events_insert_own" ON public.download_events
+  FOR INSERT WITH CHECK (user_id = auth.uid() AND NOT public.is_banned_user(auth.uid()));
+
 DROP POLICY IF EXISTS "audit_insert_staff" ON public.audit_logs;
 CREATE POLICY "audit_insert_staff" ON public.audit_logs
   FOR INSERT

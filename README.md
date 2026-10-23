@@ -30,7 +30,7 @@ See **setup-guide-fa.md**.
 
 ## Security
 
-- Role, verification, and ban fields locked by DB trigger (`protect_profile_privileged_fields`); ordinary profile edits still allowed.
+- Role locked for all clients; verification and ban fields are **owner-only** (DB trigger) (`protect_profile_privileged_fields`); ordinary profile edits still allowed.
 - Clients cannot self-promote or self-verify.
 - Regular users insert tracks only as `pending`.
 - Storage writes scoped to own folder or owner.
