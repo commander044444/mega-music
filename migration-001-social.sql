@@ -8,6 +8,8 @@
 -- bio, avatar_url, updated_at). They cannot change role, is_verified, is_banned,
 -- banned_until, or ban_reason. Enforced by trigger protect_profile_privileged_fields()
 -- (database-enforced, not frontend-only).
+-- protect_profile_role() is a full duplicate body for compatibility only;
+-- it is not wired as a second trigger and does not call other trigger functions.
 
 -- ---------------------------------------------------------------------------
 -- Profiles: bio, verification, bans
@@ -153,16 +155,43 @@ CREATE TRIGGER protect_profile_privileged_fields_trg
   FOR EACH ROW
   EXECUTE FUNCTION public.protect_profile_privileged_fields();
 
--- Keep a compatibility alias so older docs/names still point at the same logic
+-- Compatibility: redefine protect_profile_role with the SAME full body so any
+-- leftover reference is safe. It does NOT call another trigger function.
+-- Active trigger on profiles is only protect_profile_privileged_fields_trg.
 CREATE OR REPLACE FUNCTION public.protect_profile_role()
 RETURNS TRIGGER
 LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path = public
 AS $$
+DECLARE
+  staff boolean;
+  owner_actor boolean;
 BEGIN
-  -- Delegate to the expanded protector
-  RETURN public.protect_profile_privileged_fields();
+  IF NEW.id IS DISTINCT FROM OLD.id THEN
+    RAISE EXCEPTION 'profile id cannot be changed';
+  END IF;
+  IF NEW.role IS DISTINCT FROM OLD.role THEN
+    RAISE EXCEPTION 'role can only be changed by a database administrator (SQL Editor / service role)';
+  END IF;
+
+  staff := public.is_staff();
+  owner_actor := public.is_owner();
+
+  IF NEW.is_verified IS DISTINCT FROM OLD.is_verified
+     OR NEW.is_banned IS DISTINCT FROM OLD.is_banned
+     OR NEW.banned_until IS DISTINCT FROM OLD.banned_until
+     OR NEW.ban_reason IS DISTINCT FROM OLD.ban_reason THEN
+    IF NOT staff THEN
+      RAISE EXCEPTION 'verification and ban fields can only be changed by authorized staff';
+    END IF;
+    IF OLD.role = 'owner' AND NOT owner_actor THEN
+      RAISE EXCEPTION 'administrators cannot change verification or ban fields on the owner account';
+    END IF;
+  END IF;
+
+  NEW.updated_at := now();
+  RETURN NEW;
 END;
 $$;
 
@@ -284,16 +313,34 @@ LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path = public
 AS $$
+DECLARE
+  staff boolean;
 BEGIN
+  staff := public.is_staff();
+
+  -- Ownership of the upload is immutable
   IF NEW.uploaded_by IS DISTINCT FROM OLD.uploaded_by THEN
     RAISE EXCEPTION 'uploaded_by cannot be changed';
   END IF;
 
+  -- Moderation metadata: only staff may set or change
+  IF NEW.reviewed_by IS DISTINCT FROM OLD.reviewed_by
+     OR NEW.reviewed_at IS DISTINCT FROM OLD.reviewed_at
+     OR NEW.moderation_note IS DISTINCT FROM OLD.moderation_note THEN
+    IF NOT staff THEN
+      RAISE EXCEPTION 'moderation metadata can only be changed by authorized staff';
+    END IF;
+  END IF;
+
+  -- Status transitions to staff-only values
   IF NEW.status IS DISTINCT FROM OLD.status THEN
-    -- Only staff may set published / rejected / removed / approved / in_review
     IF NEW.status IN ('published', 'rejected', 'removed', 'approved', 'in_review')
-       AND NOT public.is_staff() THEN
+       AND NOT staff THEN
       RAISE EXCEPTION 'only staff can set moderation status %', NEW.status;
+    END IF;
+    -- Non-staff may only keep draft/pending/needs_changes (matches RLS)
+    IF NOT staff AND NEW.status NOT IN ('draft', 'pending', 'needs_changes') THEN
+      RAISE EXCEPTION 'invalid status for non-staff track update: %', NEW.status;
     END IF;
   END IF;
 
