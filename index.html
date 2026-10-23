@@ -245,8 +245,24 @@
           <select id="subLang"><option value="fa">فارسی</option><option value="en">English</option><option value="other">سایر</option></select>
         </div>
         <div class="form-group"><label for="subLyrics">متن آهنگ</label><textarea id="subLyrics"></textarea></div>
-        <div class="form-group"><label for="subCover">کاور (حداکثر ۵ مگابایت)</label><input type="file" id="subCover" accept="image/jpeg,image/png,image/webp"></div>
-        <div class="form-group"><label for="subAudio">فایل صوتی * (حداکثر ۳۰ مگابایت)</label><input type="file" id="subAudio" accept="audio/mpeg,audio/mp3,audio/wav,audio/ogg" required></div>
+        <div class="form-group"><label for="subCover">کاور (حداکثر ۵ مگابایت)</label><input type="file" id="subCover" accept="image/jpeg,image/png,image/webp">
+          <div class="file-size-hint" id="subCoverSize"></div>
+        </div>
+        <div class="form-group"><label for="subAudio">فایل صوتی * (حداکثر ۳۰ مگابایت)</label><input type="file" id="subAudio" accept="audio/mpeg,audio/mp3,audio/wav,audio/ogg" required>
+          <div class="file-size-hint" id="subAudioSize"></div>
+        </div>
+        <div id="uploadProgressPanel" class="upload-progress-panel hidden" aria-live="polite">
+          <div class="upload-progress-item" id="uploadProgCoverWrap">
+            <div class="upload-progress-label"><span>کاور</span><span id="uploadProgCoverPct">0٪</span></div>
+            <div class="upload-progress-bar"><span id="uploadProgCoverBar"></span></div>
+            <div class="upload-progress-bytes" id="uploadProgCoverBytes">۰ از ۰ مگابایت</div>
+          </div>
+          <div class="upload-progress-item" id="uploadProgAudioWrap">
+            <div class="upload-progress-label"><span>فایل صوتی</span><span id="uploadProgAudioPct">0٪</span></div>
+            <div class="upload-progress-bar"><span id="uploadProgAudioBar"></span></div>
+            <div class="upload-progress-bytes" id="uploadProgAudioBytes">۰ از ۰ مگابایت</div>
+          </div>
+        </div>
         <p class="msg msg-info" id="submitHint">آهنگ شما برای بررسی ارسال می‌شود و پس از تأیید منتشر خواهد شد.</p>
         <button type="submit" class="btn btn-primary" id="btnDoSubmit">ارسال برای بررسی</button>
       </form>

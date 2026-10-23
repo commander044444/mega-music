@@ -418,3 +418,48 @@ body::before {
 @media (max-width: 520px) {
   .admin-pending-dl { grid-template-columns: 1fr; }
 }
+
+
+/* Upload progress */
+.file-size-hint {
+  font-size: 0.75rem;
+  color: var(--text-dim, #9a9aa0);
+  margin-top: 6px;
+}
+.upload-progress-panel {
+  margin: 12px 0 16px;
+  padding: 12px;
+  border-radius: 14px;
+  background: rgba(0,0,0,.35);
+  border: 1px solid rgba(255,255,255,.08);
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.upload-progress-panel.hidden { display: none; }
+.upload-progress-label {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.8rem;
+  margin-bottom: 6px;
+  color: var(--text, #eee);
+}
+.upload-progress-bar {
+  height: 8px;
+  border-radius: 999px;
+  background: rgba(255,255,255,.1);
+  overflow: hidden;
+}
+.upload-progress-bar > span {
+  display: block;
+  height: 100%;
+  width: 0%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #c4122f, #ff4d6d);
+  transition: width 0.15s ease-out;
+}
+.upload-progress-bytes {
+  font-size: 0.72rem;
+  color: var(--text-dim, #9a9aa0);
+  margin-top: 6px;
+}

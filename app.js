@@ -657,6 +657,110 @@
   }
 
   // ---------- Upload / submit ----------
+  function formatBytesMB(bytes) {
+    const n = Number(bytes) || 0;
+    return (n / (1024 * 1024)).toFixed(2);
+  }
+
+  function setFileSizeHint(inputId, hintId) {
+    const input = $(inputId);
+    const hint = $(hintId);
+    if (!input || !hint) return;
+    const f = input.files && input.files[0];
+    if (!f) { hint.textContent = ''; return; }
+    hint.textContent = `حجم انتخاب‌شده: ${formatBytesMB(f.size)} مگابایت`;
+  }
+
+  function resetUploadProgressUI() {
+    const panel = $('#uploadProgressPanel');
+    panel?.classList.add('hidden');
+    ['Cover', 'Audio'].forEach(kind => {
+      const bar = $(`#uploadProg${kind}Bar`);
+      const pct = $(`#uploadProg${kind}Pct`);
+      const bytes = $(`#uploadProg${kind}Bytes`);
+      if (bar) bar.style.width = '0%';
+      if (pct) pct.textContent = '0٪';
+      if (bytes) bytes.textContent = '۰ از ۰ مگابایت';
+    });
+    $('#uploadProgCoverWrap')?.classList.add('hidden');
+    $('#uploadProgAudioWrap')?.classList.add('hidden');
+  }
+
+  function updateUploadProgress(kind, loaded, total) {
+    const panel = $('#uploadProgressPanel');
+    panel?.classList.remove('hidden');
+    const wrap = $(`#uploadProg${kind}Wrap`);
+    wrap?.classList.remove('hidden');
+    const safeTotal = total > 0 ? total : 1;
+    const percent = Math.min(100, Math.round((loaded / safeTotal) * 100));
+    const bar = $(`#uploadProg${kind}Bar`);
+    const pct = $(`#uploadProg${kind}Pct`);
+    const bytes = $(`#uploadProg${kind}Bytes`);
+    if (bar) bar.style.width = percent + '%';
+    if (pct) pct.textContent = percent + '٪';
+    if (bytes) {
+      bytes.textContent = `${formatBytesMB(loaded)} از ${formatBytesMB(total)} مگابایت`;
+    }
+  }
+
+  /**
+   * Upload via XHR so we can report progress (Supabase storage REST).
+   * Same auth as JS client: Bearer session + apikey anon.
+   */
+  async function uploadWithProgress(bucket, path, file, contentType, onProgress) {
+    const base = (window.MEGA_CONFIG && window.MEGA_CONFIG.supabaseUrl || '').replace(/\/$/, '');
+    const anon = window.MEGA_CONFIG && window.MEGA_CONFIG.supabaseAnonKey;
+    if (!base || !anon) throw new Error('پیکربندی Supabase ناقص است.');
+
+    const { data: sessData, error: sessErr } = await sb.auth.getSession();
+    if (sessErr) throw sessErr;
+    const token = sessData?.session?.access_token;
+    if (!token) throw new Error('نشست معتبر نیست. دوباره وارد شوید.');
+
+    const url = `${base}/storage/v1/object/${encodeURIComponent(bucket)}/${path.split('/').map(encodeURIComponent).join('/')}`;
+
+    return new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open('POST', url, true);
+      xhr.setRequestHeader('Authorization', `Bearer ${token}`);
+      xhr.setRequestHeader('apikey', anon);
+      xhr.setRequestHeader('x-upsert', 'false');
+      xhr.setRequestHeader('Content-Type', contentType || file.type || 'application/octet-stream');
+      xhr.upload.onprogress = (e) => {
+        if (typeof onProgress === 'function') {
+          const total = e.lengthComputable ? e.total : file.size;
+          const loaded = e.loaded || 0;
+          onProgress({ loaded, total: total || file.size, percent: total ? Math.round((loaded / total) * 100) : 0 });
+        }
+      };
+      xhr.onload = () => {
+        if (xhr.status >= 200 && xhr.status < 300) {
+          if (typeof onProgress === 'function') {
+            onProgress({ loaded: file.size, total: file.size, percent: 100 });
+          }
+          try {
+            resolve(xhr.responseText ? JSON.parse(xhr.responseText) : {});
+          } catch {
+            resolve({});
+          }
+        } else {
+          let msg = `آپلود ناموفق (${xhr.status})`;
+          try {
+            const j = JSON.parse(xhr.responseText);
+            msg = j.message || j.error || j.msg || msg;
+          } catch {
+            if (xhr.responseText) msg = xhr.responseText.slice(0, 200);
+          }
+          reject(new Error(msg));
+        }
+      };
+      xhr.onerror = () => reject(new Error('خطای شبکه هنگام آپلود'));
+      xhr.onabort = () => reject(new Error('آپلود لغو شد'));
+      xhr.send(file);
+    });
+  }
+
+
   function validateFiles(audioFile, coverFile) {
     if (!audioFile) return 'فایل صوتی الزامی است.';
     if (audioFile.size > MAX_AUDIO) return 'حجم صوت حداکثر ۳۰ مگابایت است.';
@@ -694,7 +798,8 @@
 
     const btn = $('#btnDoSubmit');
     if (btn) btn.disabled = true;
-    showMsg($('#submitMsg'), 'در حال بارگذاری...', 'info');
+    resetUploadProgressUI();
+    showMsg($('#submitMsg'), 'در حال بارگذاری فایل‌ها…', 'info');
 
     const uid = state.user.id;
     const ts = Date.now();
@@ -704,15 +809,31 @@
       if (coverFile) {
         const safe = coverFile.name.replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 80);
         coverPath = `${uid}/${ts}-c-${safe}`;
-        const { error } = await sb.storage.from('covers').upload(coverPath, coverFile, { upsert: false, contentType: coverFile.type || 'image/jpeg' });
-        if (error) throw error;
+        updateUploadProgress('Cover', 0, coverFile.size);
+        await uploadWithProgress(
+          'covers',
+          coverPath,
+          coverFile,
+          coverFile.type || 'image/jpeg',
+          ({ loaded, total }) => updateUploadProgress('Cover', loaded, total)
+        );
         coverUrl = sb.storage.from('covers').getPublicUrl(coverPath).data.publicUrl;
+      } else {
+        $('#uploadProgCoverWrap')?.classList.add('hidden');
       }
       const safeA = audioFile.name.replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 80);
       audioPath = `${uid}/${ts}-a-${safeA}`;
-      const { error: aErr } = await sb.storage.from('audio').upload(audioPath, audioFile, { upsert: false, contentType: audioFile.type || 'audio/mpeg' });
-      if (aErr) throw aErr;
+      updateUploadProgress('Audio', 0, audioFile.size);
+      showMsg($('#submitMsg'), 'در حال آپلود فایل صوتی…', 'info');
+      await uploadWithProgress(
+        'audio',
+        audioPath,
+        audioFile,
+        audioFile.type || 'audio/mpeg',
+        ({ loaded, total }) => updateUploadProgress('Audio', loaded, total)
+      );
       const audioUrl = sb.storage.from('audio').getPublicUrl(audioPath).data.publicUrl;
+      showMsg($('#submitMsg'), 'در حال ثبت اطلاعات آهنگ…', 'info');
 
       const status = state.isOwner ? 'published' : 'pending';
       const { error: iErr } = await sb.from('tracks').insert({
@@ -1208,6 +1329,8 @@
     $('#authContinueNoEmail')?.addEventListener('click', handleContinueWithoutEmailVerify);
     $('#btnLogout')?.addEventListener('click', handleLogout);
     $('#submitForm')?.addEventListener('submit', handleSubmit);
+    $('#subCover')?.addEventListener('change', () => setFileSizeHint('#subCover', '#subCoverSize'));
+    $('#subAudio')?.addEventListener('change', () => setFileSizeHint('#subAudio', '#subAudioSize'));
     $('#btnSubmitOpen')?.addEventListener('click', () => {
       if (!state.user) openAuth('login');
       else $('#submitOverlay')?.classList.add('open');
