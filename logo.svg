@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 180 40" fill="none">
+  <defs>
+    <linearGradient id="logoGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#e11d48"/>
+      <stop offset="100%" stop-color="#be123c"/>
+    </linearGradient>
+  </defs>
+  <circle cx="18" cy="20" r="14" stroke="url(#logoGrad)" stroke-width="2" fill="none"/>
+  <path d="M13 13v14l11-7-11-7z" fill="url(#logoGrad)"/>
+  <text x="40" y="26" font-family="Inter, system-ui, sans-serif" font-size="18" font-weight="700" letter-spacing="1.5" fill="#fafafa">MEGA</text>
+  <text x="98" y="26" font-family="Inter, system-ui, sans-serif" font-size="18" font-weight="600" letter-spacing="1" fill="#e11d48">MUSIC</text>
+</svg>
