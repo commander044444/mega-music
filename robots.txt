@@ -1,0 +1,5 @@
+User-agent: *
+Allow: /
+
+# Public static site on GitHub Pages. Catalog content is loaded client-side from Supabase.
+Sitemap: https://commander044444.github.io/mega-music/sitemap.xml
