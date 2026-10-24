@@ -355,7 +355,7 @@
     state.user = session?.user || null;
     if (state.user) {
       const { data: profile } = await sb.from('profiles')
-        .select('id, username, display_name, role, avatar_url, bio, is_verified, is_banned, banned_until')
+        .select('id, username, display_name, role, avatar_url, bio, is_verified, is_banned, banned_until, can_auto_publish')
         .eq('id', state.user.id).maybeSingle();
       state.profile = profile;
       state.isOwner = profile?.role === 'owner';
@@ -396,14 +396,21 @@
       } else {
         $('#adminSection')?.classList.add('hidden');
       }
-      const hint = $('#submitHint');
-      if (hint) {
-        hint.textContent = state.isOwner
-          ? 'به‌عنوان مالک می‌توانید مستقیماً منتشر کنید.'
-          : 'آهنگ شما برای بررسی ارسال می‌شود و پس از تأیید منتشر خواهد شد.';
-      }
       const subBtn = $('#btnDoSubmit');
-      if (subBtn) subBtn.textContent = state.isOwner ? 'بارگذاری و انتشار' : 'ارسال برای بررسی';
+      const hint = $('#submitHint');
+      const autoPub = !!(state.profile && state.profile.is_verified && state.profile.can_auto_publish);
+      if (subBtn) {
+        subBtn.textContent = (state.isOwner || autoPub) ? 'بارگذاری و انتشار' : 'ارسال برای بررسی';
+      }
+      if (hint) {
+        if (state.isOwner) {
+          hint.textContent = 'به‌عنوان مالک، آهنگ مستقیماً منتشر می‌شود.';
+        } else if (autoPub) {
+          hint.textContent = 'حساب شما تأیید شده و انتشار بدون بررسی فعال است؛ آهنگ مستقیماً در کاتالوگ عمومی قرار می‌گیرد.';
+        } else {
+          hint.textContent = 'آهنگ شما برای بررسی ارسال می‌شود و پس از تأیید منتشر خواهد شد.';
+        }
+      }
     } else {
       $('#profileGuest')?.classList.remove('hidden');
       $('#profileUser')?.classList.add('hidden');
@@ -941,7 +948,9 @@
       const audioUrl = sb.storage.from('audio').getPublicUrl(audioPath).data.publicUrl;
       showMsg($('#submitMsg'), 'در حال ثبت اطلاعات آهنگ…', 'info');
 
-      const status = state.isOwner ? 'published' : 'pending';
+      const autoPub = !!(state.profile && state.profile.is_verified && state.profile.can_auto_publish);
+      const status = (state.isOwner || autoPub) ? 'published' : 'pending';
+
       const { error: iErr } = await sb.from('tracks').insert({
         title, artist_name: artist, album: album || null, cover_url: coverUrl,
         audio_url: audioUrl, tags, language, lyrics: lyrics || null,
@@ -1224,17 +1233,19 @@
         <p class="msg msg-info">پیش‌نمایش فقط برای مدیر/مالک است و آهنگ را در کاتالوگ عمومی منتشر نمی‌کند.</p>`;
       } else if (tab === 'users') {
         const { data } = await sb.from('profiles')
-          .select('id, username, display_name, role, is_verified, is_banned, created_at')
+          .select('id, username, display_name, role, is_verified, is_banned, can_auto_publish, created_at')
           .order('created_at', { ascending: false }).limit(40);
         box.innerHTML = `<div class="admin-list">${(data || []).map(u => `
           <div class="admin-item">
             <strong>${escapeHtml(u.display_name || u.username || '')}</strong>
             @${escapeHtml(u.username || '—')} · ${escapeHtml(u.role)}
             ${u.is_verified ? verifiedBadge() : ''}
+            ${u.can_auto_publish ? '<span class="status-pill status-published">انتشار خودکار</span>' : ''}
             ${u.is_banned ? '<span class="status-pill status-rejected">مسدود</span>' : ''}
             <div class="actions">
               ${state.isOwner && u.role !== 'owner' ? `<button type="button" class="btn btn-ghost btn-sm" data-ban="${u.id}" data-banned="${u.is_banned}">${u.is_banned ? 'رفع مسدودیت' : 'مسدود'}</button>` : ''}
               ${state.isOwner && u.role !== 'owner' ? `<button type="button" class="btn btn-ghost btn-sm" data-verify="${u.id}" data-v="${u.is_verified}">${u.is_verified ? 'لغو تأیید' : 'تأیید'}</button>` : ''}
+              ${state.isOwner && u.role !== 'owner' && u.is_verified ? `<button type="button" class="btn btn-ghost btn-sm" data-autopub="${u.id}" data-ap="${u.can_auto_publish ? 'true' : 'false'}">${u.can_auto_publish ? 'خاموش کردن انتشار خودکار' : 'فعال‌سازی انتشار بدون بررسی'}</button>` : ''}
             </div>
           </div>`).join('')}</div>`;
       } else if (tab === 'tracks') {
@@ -1290,10 +1301,23 @@
   }
 
   async function toggleVerify(uid, currently) {
-    if (!sb || !state.isStaff) return;
+    if (!sb || !state.isOwner) return;
     const v = !(currently === 'true' || currently === true);
-    const { error } = await sb.from('profiles').update({ is_verified: v }).eq('id', uid);
+    const patch = { is_verified: v };
+    if (!v) patch.can_auto_publish = false;
+    const { error } = await sb.from('profiles').update(patch).eq('id', uid);
     if (error) alert(error.message); else loadAdmin('users');
+  }
+
+  async function toggleAutoPublish(uid, currently) {
+    if (!sb || !state.isOwner) return;
+    const on = !(currently === 'true' || currently === true);
+    const { error } = await sb.from('profiles').update({ can_auto_publish: on }).eq('id', uid);
+    if (error) {
+      alert(error.message || 'فقط برای کاربران دارای تیک آبی قابل تنظیم است.');
+      return;
+    }
+    loadAdmin('users');
   }
 
   async function toggleLike() {
@@ -1383,6 +1407,8 @@
       if (ban) { toggleBan(ban.dataset.ban, ban.dataset.banned); return; }
       const ver = e.target.closest('[data-verify]');
       if (ver) { toggleVerify(ver.dataset.verify, ver.dataset.v); return; }
+      const ap = e.target.closest('[data-autopub]');
+      if (ap) { toggleAutoPublish(ap.dataset.autopub, ap.dataset.ap); return; }
       const pl = e.target.closest('[data-play-pl]');
       if (pl) { playPlaylist(pl.dataset.playPl); return; }
     });
