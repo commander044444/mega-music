@@ -478,3 +478,21 @@ body::before {
   margin-top: 8px;
   font-variant-numeric: tabular-nums;
 }
+
+/* Brand SEO visible labels */
+.hero-brand-en {
+  margin: 0.15rem 0 0.35rem;
+  font-size: 0.95rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  color: rgba(255, 255, 255, 0.72);
+  text-align: center;
+}
+.hero-intro {
+  margin: 0 auto 0.75rem;
+  max-width: 22rem;
+  font-size: 0.82rem;
+  line-height: 1.55;
+  color: rgba(255, 255, 255, 0.55);
+  text-align: center;
+}
