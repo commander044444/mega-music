@@ -1494,6 +1494,27 @@
       }
       const userRow = e.target.closest('[data-kind="user"]');
       if (userRow?.dataset.uid) { openUserProfile(userRow.dataset.uid); return; }
+      const adClick = e.target.closest('[data-ad-click]');
+      if (adClick) {
+        recordAdEvent(adClick.getAttribute('data-ad-click'), 'click');
+      }
+      const adDel = e.target.closest('[data-ad-del]');
+      if (adDel) {
+        if (!state.isOwner) return;
+        if (!confirm('حذف این کمپین؟')) return;
+        sb.from('ad_campaigns').delete().eq('id', adDel.getAttribute('data-ad-del')).then(({ error }) => {
+          if (error) alert(error.message); else loadAdmin('ads');
+        });
+        return;
+      }
+      const adSt = e.target.closest('[data-ad-status]');
+      if (adSt) {
+        if (!state.isOwner) return;
+        sb.from('ad_campaigns').update({ status: adSt.getAttribute('data-to'), updated_at: new Date().toISOString() }).eq('id', adSt.getAttribute('data-ad-status')).then(({ error }) => {
+          if (error) alert(error.message); else loadAdmin('ads');
+        });
+        return;
+      }
       const prevPlay = e.target.closest('[data-preview-play]');
       if (prevPlay) {
         const id = prevPlay.getAttribute('data-preview-play');
