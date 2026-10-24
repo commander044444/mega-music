@@ -282,8 +282,35 @@ body::before {
 .fp-lyrics.hidden { display: none; }
 
 /* Views */
-.view { display: none; flex-direction: column; flex: 1; }
-.view.active { display: flex; }
+.view {
+  display: none;
+  flex-direction: column;
+  flex: 1;
+}
+.view.active {
+  display: flex;
+  animation: mmViewIn 0.42s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+@keyframes mmViewIn {
+  from { opacity: 0; transform: translateY(18px) scale(0.98); filter: blur(2px); }
+  to { opacity: 1; transform: translateY(0) scale(1); filter: blur(0); }
+}
+@keyframes mmFadeUp {
+  from { opacity: 0; transform: translateY(12px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes mmPop {
+  from { opacity: 0; transform: scale(0.92); }
+  to { opacity: 1; transform: scale(1); }
+}
+@keyframes mmOverlayIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes mmModalIn {
+  from { opacity: 0; transform: translateY(24px) scale(0.96); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
 .panel { padding: 16px; }
 .panel h2 { font-size: 1.2rem; margin-bottom: 14px; font-weight: 700; }
 .panel h3 { font-size: 1rem; margin: 16px 0 10px; font-weight: 600; }
@@ -593,3 +620,57 @@ body::before {
 
 .ad-image-preview { margin-top: 10px; }
 .ad-image-preview.hidden { display: none !important; }
+
+/* Page / UI motion */
+.track-row, .user-row, .admin-item, .artist-chip, .stat-card, .section-block, .ad-slot:not(.hidden) {
+  animation: mmFadeUp 0.38s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+.track-list .track-row:nth-child(1) { animation-delay: 0.02s; }
+.track-list .track-row:nth-child(2) { animation-delay: 0.05s; }
+.track-list .track-row:nth-child(3) { animation-delay: 0.08s; }
+.track-list .track-row:nth-child(4) { animation-delay: 0.11s; }
+.track-list .track-row:nth-child(5) { animation-delay: 0.14s; }
+.track-list .track-row:nth-child(n+6) { animation-delay: 0.16s; }
+
+.overlay.open {
+  animation: mmOverlayIn 0.28s ease both;
+}
+.overlay.open .modal {
+  animation: mmModalIn 0.36s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+.nav-item {
+  transition: color 0.25s ease, transform 0.25s ease, background 0.25s ease;
+}
+.nav-item.active {
+  transform: translateY(-2px);
+}
+.cat-chip {
+  transition: background 0.25s ease, color 0.25s ease, border-color 0.25s ease, transform 0.2s ease;
+}
+.cat-chip:active, .btn:active, .icon-btn:active, .row-btn:active {
+  transform: scale(0.96);
+}
+.btn, .icon-btn, .row-btn, .track-row, .user-row {
+  transition: transform 0.2s ease, background 0.25s ease, border-color 0.25s ease, box-shadow 0.25s ease;
+}
+.mini-player {
+  transition: transform 0.35s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.3s ease;
+}
+.full-player {
+  transition: opacity 0.35s ease, transform 0.4s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.hero-title, .hero-brand-en, .hero-intro, .hero-sub {
+  animation: mmFadeUp 0.5s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+.hero-brand-en { animation-delay: 0.06s; }
+.hero-intro { animation-delay: 0.12s; }
+.hero-sub { animation-delay: 0.18s; }
+
+@media (prefers-reduced-motion: reduce) {
+  .view.active,
+  .track-row, .user-row, .admin-item, .artist-chip, .stat-card, .section-block,
+  .overlay.open, .overlay.open .modal,
+  .hero-title, .hero-brand-en, .hero-intro, .hero-sub {
+    animation: none !important;
+  }
+}

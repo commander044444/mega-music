@@ -154,13 +154,36 @@
   }
 
   // ---------- Search ----------
+  function getSearchTargets() {
+    // #searchResults always exists in DOM; home search must use #trackList
+    const onSearch = $('#view-search') && $('#view-search').classList.contains('active');
+    if (onSearch) {
+      return {
+        resultsBox: $('#searchResults') || $('#trackList'),
+        emptyEl: $('#searchEmpty') || $('#emptyState')
+      };
+    }
+    return {
+      resultsBox: $('#trackList'),
+      emptyEl: $('#emptyState')
+    };
+  }
+
+  function escapeIlike(s) {
+    return String(s || '').replace(/[%_,]/g, '').trim();
+  }
+
   async function runSearch(q, cat) {
     const nq = normalize(q);
-    const resultsBox = $('#searchResults') || $('#trackList');
-    const emptyEl = $('#searchEmpty') || $('#emptyState');
+    cat = cat || 'tracks';
+    const targets = getSearchTargets();
+    const resultsBox = targets.resultsBox;
+    const emptyEl = targets.emptyEl;
+    if (!resultsBox) return;
+
     if (!nq) {
       if (cat === 'tracks' || cat === 'all') {
-        state.filtered = [...state.tracks];
+        state.filtered = state.tracks.slice();
         renderTracks(state.filtered, resultsBox, emptyEl);
       } else {
         resultsBox.innerHTML = '';
@@ -168,78 +191,128 @@
       }
       return;
     }
+
+    // Instant local filter for tracks (home page catalog)
+    let localTracks = [];
+    if (cat === 'tracks' || cat === 'all') {
+      localTracks = state.tracks.filter(function (t) {
+        return normalize(t.title).includes(nq) ||
+          normalize(t.artist).includes(nq) ||
+          normalize(t.album || '').includes(nq) ||
+          (t.tags || []).some(function (x) { return normalize(x).includes(nq); });
+      });
+      state.filtered = localTracks;
+      if (localTracks.length) {
+        renderTracks(localTracks, resultsBox, emptyEl);
+      }
+    }
+
     if (!sb) {
-      state.filtered = state.tracks.filter(t =>
-        normalize(t.title).includes(nq) || normalize(t.artist).includes(nq) ||
-        (t.tags || []).some(x => normalize(x).includes(nq)));
-      renderTracks(state.filtered, resultsBox, emptyEl);
+      if (cat === 'tracks' || cat === 'all') {
+        renderTracks(localTracks, resultsBox, emptyEl);
+      } else {
+        resultsBox.innerHTML = '';
+        if (emptyEl) emptyEl.classList.remove('hidden');
+      }
       return;
     }
 
-    resultsBox.innerHTML = '<div class="spinner"></div>';
+    const term = escapeIlike(q);
+    if (!term) return;
+
+    if (!localTracks.length) {
+      resultsBox.innerHTML = '<div class="spinner"></div>';
+      if (emptyEl) emptyEl.classList.add('hidden');
+    }
+
     const parts = [];
     try {
       if (cat === 'tracks' || cat === 'all') {
         const { data } = await sb.from('tracks')
           .select('id, title, artist_name, album, cover_url, audio_url, duration_seconds, tags, lyrics, status, uploaded_by')
           .eq('status', 'published')
-          .or(`title.ilike.%${q.replace(/%/g, '')}%,artist_name.ilike.%${q.replace(/%/g, '')}%`)
+          .or('title.ilike.%' + term + '%,artist_name.ilike.%' + term + '%')
           .limit(40);
-        (data || []).forEach(t => parts.push({ type: 'track', data: mapTrack(t) }));
+        (data || []).forEach(function (tr) { parts.push({ type: 'track', data: mapTrack(tr) }); });
       }
       if (cat === 'users' || cat === 'all') {
         const { data } = await sb.from('profiles')
           .select('id, username, display_name, avatar_url, is_verified, role, bio')
-          .or(`username.ilike.%${q.replace(/%/g, '')}%,display_name.ilike.%${q.replace(/%/g, '')}%`)
+          .or('username.ilike.%' + term + '%,display_name.ilike.%' + term + '%')
           .limit(30);
-        (data || []).forEach(u => parts.push({ type: 'user', data: u }));
+        (data || []).forEach(function (u) { parts.push({ type: 'user', data: u }); });
       }
       if (cat === 'playlists' || cat === 'all') {
         const { data } = await sb.from('playlists')
           .select('id, title, description, cover_url, is_public, is_official, user_id')
           .eq('is_public', true)
-          .ilike('title', `%${q.replace(/%/g, '')}%`)
+          .ilike('title', '%' + term + '%')
           .limit(20);
-        (data || []).forEach(p => parts.push({ type: 'playlist', data: p }));
+        (data || []).forEach(function (pl) { parts.push({ type: 'playlist', data: pl }); });
       }
     } catch (e) { console.warn('search', e); }
 
+    // Re-resolve targets in case view changed during await
+    const targets2 = getSearchTargets();
+    const box = targets2.resultsBox;
+    const empty2 = targets2.emptyEl;
+    if (!box) return;
+
     if (!parts.length) {
-      resultsBox.innerHTML = '';
-      if (emptyEl) emptyEl.classList.remove('hidden');
+      if ((cat === 'tracks' || cat === 'all') && localTracks.length) {
+        renderTracks(localTracks, box, empty2);
+        return;
+      }
+      box.innerHTML = '';
+      if (empty2) {
+        empty2.classList.remove('hidden');
+        const h = empty2.querySelector('h2');
+        if (h) h.textContent = 'نتیجه‌ای یافت نشد';
+      }
       return;
     }
-    if (emptyEl) emptyEl.classList.add('hidden');
-    resultsBox.innerHTML = parts.map(p => {
+    if (empty2) empty2.classList.add('hidden');
+
+    // Tracks-only on home: use renderTracks for consistent play UI
+    if (cat === 'tracks' && parts.every(function (p) { return p.type === 'track'; })) {
+      const tracksOnly = parts.map(function (p) { return p.data; });
+      state.filtered = tracksOnly;
+      tracksOnly.forEach(function (tr) {
+        if (!state.queue.find(function (x) { return String(x.id) === String(tr.id); })) state.queue.push(tr);
+      });
+      renderTracks(tracksOnly, box, empty2);
+      return;
+    }
+
+    box.innerHTML = parts.map(function (p) {
       if (p.type === 'track') {
-        const t = p.data;
-        return `<article class="track-row" data-id="${escapeHtml(t.id)}" data-kind="track">
-          <div class="row-actions"><button type="button" class="row-btn play" data-action="play"><svg><use href="icons.svg#icon-play"></use></svg></button></div>
-          <div class="row-meta"><div class="row-title">${escapeHtml(t.title)}</div><div class="row-artist">${escapeHtml(t.artist)}</div></div>
-          ${t.cover ? `<img class="row-art" src="${escapeHtml(t.cover)}" alt="" loading="lazy">` : '<div class="row-art"></div>'}
-        </article>`;
+        const tr = p.data;
+        return '<article class="track-row" data-id="' + escapeHtml(tr.id) + '" data-kind="track">' +
+          '<div class="row-actions"><button type="button" class="row-btn play" data-action="play"><svg><use href="icons.svg#icon-play"></use></svg></button></div>' +
+          '<div class="row-meta"><div class="row-title">' + escapeHtml(tr.title) + '</div><div class="row-artist">' + escapeHtml(tr.artist) + '</div></div>' +
+          (tr.cover ? '<img class="row-art" src="' + escapeHtml(tr.cover) + '" alt="" loading="lazy">' : '<div class="row-art"></div>') +
+          '</article>';
       }
       if (p.type === 'user') {
         const u = p.data;
         const badge = u.is_verified || u.role === 'owner' ? verifiedBadge() : '';
-        return `<div class="user-row" data-uid="${escapeHtml(u.id)}" data-kind="user">
-          <img class="user-avatar" src="${escapeHtml(u.avatar_url || '')}" alt="" onerror="this.style.background='#1a1a1e'">
-          <div class="user-meta"><div class="user-name">${escapeHtml(u.display_name || u.username || 'کاربر')} ${badge}</div>
-          <div class="user-handle">@${escapeHtml(u.username || '—')}</div></div></div>`;
+        return '<div class="user-row" data-uid="' + escapeHtml(u.id) + '" data-kind="user">' +
+          '<img class="user-avatar" src="' + escapeHtml(u.avatar_url || '') + '" alt="" onerror="this.style.background=\'#1a1a1e\'">' +
+          '<div class="user-meta"><div class="user-name">' + escapeHtml(u.display_name || u.username || 'کاربر') + ' ' + badge + '</div>' +
+          '<div class="user-handle">@' + escapeHtml(u.username || '—') + '</div></div></div>';
       }
       const pl = p.data;
-      return `<div class="user-row" data-pid="${escapeHtml(pl.id)}" data-kind="playlist">
-        <div class="user-avatar" style="border-radius:10px;display:grid;place-items:center;font-size:0.7rem">PL</div>
-        <div class="user-meta"><div class="user-name">${escapeHtml(pl.title)}${pl.is_official ? ' · رسمی' : ''}</div>
-        <div class="user-handle">${escapeHtml(pl.description || 'پلی‌لیست')}</div></div></div>`;
+      return '<div class="user-row" data-pid="' + escapeHtml(pl.id) + '" data-kind="playlist">' +
+        '<div class="user-avatar" style="border-radius:10px;display:grid;place-items:center;font-size:0.7rem">PL</div>' +
+        '<div class="user-meta"><div class="user-name">' + escapeHtml(pl.title) + (pl.is_official ? ' · رسمی' : '') + '</div>' +
+        '<div class="user-handle">' + escapeHtml(pl.description || 'پلی‌لیست') + '</div></div></div>';
     }).join('');
 
-    // keep track list in state for play from search
-    const trackParts = parts.filter(p => p.type === 'track').map(p => p.data);
+    const trackParts = parts.filter(function (p) { return p.type === 'track'; }).map(function (p) { return p.data; });
     if (trackParts.length) {
       state.filtered = trackParts;
-      trackParts.forEach(t => {
-        if (!state.queue.find(x => x.id === t.id)) state.queue.push(t);
+      trackParts.forEach(function (tr) {
+        if (!state.queue.find(function (x) { return String(x.id) === String(tr.id); })) state.queue.push(tr);
       });
     }
   }
@@ -1444,10 +1517,28 @@
 
   // ---------- Navigation ----------
   function switchView(name) {
-    $$('.view').forEach(v => v.classList.remove('active'));
-    $(`#view-${name}`)?.classList.add('active');
-    $$('.nav-item').forEach(n => n.classList.toggle('active', n.dataset.view === name));
+    const next = $('#view-' + name);
+    if (!next) return;
+    const current = document.querySelector('.view.active');
+    if (current === next) {
+      next.classList.remove('view-anim-in');
+      void next.offsetWidth;
+      next.classList.add('view-anim-in');
+      return;
+    }
+    $$('.view').forEach(function (v) {
+      v.classList.remove('active', 'view-anim-in');
+    });
+    next.classList.add('active', 'view-anim-in');
+    $$('.nav-item').forEach(function (n) {
+      n.classList.toggle('active', n.dataset.view === name);
+    });
     if (name === 'playlists') loadPlaylists();
+    if (name === 'home') {
+      try {
+        renderTracks(state.filtered && state.filtered.length ? state.filtered : state.tracks);
+      } catch (e) {}
+    }
   }
 
   // ---------- Recovery hash handling ----------
@@ -1463,18 +1554,39 @@
   // ---------- Events ----------
   function bind() {
     $('#searchInput')?.addEventListener('input', e => {
-      state.searchCat = state.searchCat || 'tracks';
-      debouncedSearch(e.target.value, $('#homeCats .cat-chip.active')?.dataset.cat || 'tracks');
+      const q = e.target.value;
+      if ($('#searchInput2')) $('#searchInput2').value = q;
+      debouncedSearch(q, ($('#homeCats .cat-chip.active') && $('#homeCats .cat-chip.active').dataset.cat) || 'tracks');
+    });
+    $('#searchInput')?.addEventListener('keydown', e => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        runSearch(e.target.value, ($('#homeCats .cat-chip.active') && $('#homeCats .cat-chip.active').dataset.cat) || 'tracks');
+      }
     });
     $('#searchInput2')?.addEventListener('input', e => {
-      debouncedSearch(e.target.value, $('#searchCats .cat-chip.active')?.dataset.cat || 'all');
+      const q = e.target.value;
+      if ($('#searchInput')) $('#searchInput').value = q;
+      debouncedSearch(q, ($('#searchCats .cat-chip.active') && $('#searchCats .cat-chip.active').dataset.cat) || 'all');
     });
-    $$('#homeCats .cat-chip, #searchCats .cat-chip').forEach(chip => {
+    $('#searchInput2')?.addEventListener('keydown', e => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        runSearch(e.target.value, ($('#searchCats .cat-chip.active') && $('#searchCats .cat-chip.active').dataset.cat) || 'all');
+      }
+    });
+    $$('#homeCats .cat-chip').forEach(chip => {
       chip.addEventListener('click', () => {
         chip.parentElement.querySelectorAll('.cat-chip').forEach(c => c.classList.remove('active'));
         chip.classList.add('active');
-        const q = ($('#searchInput2')?.value || $('#searchInput')?.value || '');
-        debouncedSearch(q, chip.dataset.cat);
+        runSearch(($('#searchInput') && $('#searchInput').value) || '', chip.dataset.cat);
+      });
+    });
+    $$('#searchCats .cat-chip').forEach(chip => {
+      chip.addEventListener('click', () => {
+        chip.parentElement.querySelectorAll('.cat-chip').forEach(c => c.classList.remove('active'));
+        chip.classList.add('active');
+        runSearch(($('#searchInput2') && $('#searchInput2').value) || '', chip.dataset.cat);
       });
     });
 
