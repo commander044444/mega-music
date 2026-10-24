@@ -1125,20 +1125,42 @@
       const autoPub = !!(state.profile && state.profile.is_verified && state.profile.can_auto_publish);
       const status = (state.isOwner || autoPub) ? 'published' : 'pending';
 
-      const { error: iErr } = await sb.from('tracks').insert({
+      const { data: insertedRow, error: iErr } = await sb.from('tracks').insert({
         title, artist_name: artist, album: album || null, cover_url: coverUrl,
         audio_url: audioUrl, tags, language, lyrics: lyrics || null,
         is_downloadable: false, status, uploaded_by: uid
-      });
+      }).select('id').single();
       if (iErr) throw iErr;
       inserted = true;
+      const newTrackId = insertedRow && insertedRow.id;
+      if (targetPlaylistId && newTrackId) {
+        const { error: plErr } = await sb.from('playlist_items').insert({
+          playlist_id: targetPlaylistId,
+          track_id: newTrackId,
+          position: Date.now()
+        });
+        if (plErr && !/duplicate|unique/i.test(plErr.message || '')) {
+          console.warn('playlist link', plErr);
+        }
+      }
       updateUploadProgress('Audio', audioFile.size, audioFile.size);
-      showMsg($('#submitMsg'), status === 'published' ? 'آهنگ منتشر شد.' : 'ارسال شد و در انتظار بررسی است.', 'ok');
+      const linked = !!(targetPlaylistId && newTrackId);
+      showMsg(
+        $('#submitMsg'),
+        status === 'published'
+          ? (linked ? 'آهنگ منتشر شد و به پلی‌لیست اضافه شد.' : 'آهنگ منتشر شد.')
+          : (linked ? 'ارسال شد، در انتظار بررسی است و به پلی‌لیست اضافه شد.' : 'ارسال شد و در انتظار بررسی است.'),
+        'ok'
+      );
+      const linkedPl = targetPlaylistId;
+      targetPlaylistId = null;
       await new Promise(r => setTimeout(r, 600));
       $('#submitForm').reset();
       setFileSizeHint('#subCover', '#subCoverSize');
       setFileSizeHint('#subAudio', '#subAudioSize');
+      $('#submitOverlay')?.classList.remove('open');
       if (status === 'published') await loadCatalog();
+      if (linkedPl) await openPlaylistDetail(linkedPl);
     } catch (err) {
       if (!inserted) {
         if (audioPath) await removePath('audio', audioPath);
@@ -1248,6 +1270,8 @@
   // ---------- Playlists (redesigned) ----------
   let pendingAddTrackId = null;
   let currentPlaylistId = null;
+  let currentPlaylistMeta = null;
+  let targetPlaylistId = null;
 
   function openPlaylistCreate() {
     if (!state.user) { openAuth('login'); return; }
@@ -1265,6 +1289,9 @@
     $('#playlistCreateOverlay')?.classList.remove('open');
     const f = $('#playlistCreateForm');
     if (f) f.reset();
+    if ($('#plEditId')) $('#plEditId').value = '';
+    if ($('#playlistFormTitle')) $('#playlistFormTitle').textContent = 'ساخت پلی‌لیست';
+    if ($('#plFormSubmitBtn')) $('#plFormSubmitBtn').textContent = 'ایجاد';
     showMsg($('#plCreateMsg'), '', 'info');
   }
 
@@ -1343,9 +1370,20 @@
       .select('id, title, description, cover_url, is_public, is_official, user_id')
       .eq('id', pid).maybeSingle();
     if (!pl) {
+      currentPlaylistMeta = null;
       if (hero) hero.innerHTML = '<p class="msg msg-error">پلی‌لیست یافت نشد.</p>';
       return;
     }
+    currentPlaylistMeta = pl;
+    const isMine = !!(state.user && pl.user_id === state.user.id);
+    const canManage = isMine || state.isOwner;
+
+    ['#btnPlaylistAddTrack', '#btnPlaylistEdit', '#btnPlaylistDelete'].forEach(function (sel) {
+      const el = $(sel);
+      if (!el) return;
+      el.classList.toggle('hidden', !canManage);
+    });
+
     const cover = pl.cover_url
       ? '<img src="' + escapeHtml(pl.cover_url) + '" alt="">'
       : '<div class="pl-detail-ph">♪</div>';
@@ -1380,6 +1418,51 @@
     }
   }
 
+  function openPlaylistEdit() {
+    if (!currentPlaylistMeta) return;
+    const pl = currentPlaylistMeta;
+    const isMine = state.user && pl.user_id === state.user.id;
+    if (!isMine && !state.isOwner) return;
+    $('#plEditId').value = pl.id;
+    $('#plTitle').value = pl.title || '';
+    $('#plDesc').value = pl.description || '';
+    $('#plCover').value = '';
+    $('#playlistFormTitle').textContent = 'ویرایش پلی‌لیست';
+    $('#plFormSubmitBtn').textContent = 'ذخیره تغییرات';
+    const hint = $('#plVisibilityHint');
+    if (hint) {
+      hint.textContent = pl.is_public
+        ? 'این پلی‌لیست عمومی است.'
+        : 'این پلی‌لیست خصوصی است.';
+    }
+    $('#playlistCreateOverlay')?.classList.add('open');
+  }
+
+  async function deleteCurrentPlaylist() {
+    if (!sb || !currentPlaylistMeta || !state.user) return;
+    const pl = currentPlaylistMeta;
+    if (pl.user_id !== state.user.id && !state.isOwner) return;
+    if (!confirm('پلی‌لیست «' + (pl.title || '') + '» حذف شود؟ آهنگ‌های سایت پاک نمی‌شوند؛ فقط از این پلی‌لیست جدا می‌شوند.')) return;
+    const { error } = await sb.from('playlists').delete().eq('id', pl.id);
+    if (error) { alert(error.message); return; }
+    currentPlaylistId = null;
+    currentPlaylistMeta = null;
+    await loadPlaylists();
+  }
+
+  function openPlaylistTrackUpload() {
+    if (!state.user) { openAuth('login'); return; }
+    if (!currentPlaylistMeta) return;
+    const pl = currentPlaylistMeta;
+    if (pl.user_id !== state.user.id && !state.isOwner) return;
+    targetPlaylistId = pl.id;
+    const hint = $('#submitHint');
+    if (hint) {
+      hint.textContent = 'این آهنگ با همان فرایند آپلود سایت ارسال می‌شود و به پلی‌لیست «' + (pl.title || '') + '» اضافه خواهد شد.';
+    }
+    $('#submitOverlay')?.classList.add('open');
+  }
+
   async function playPlaylist(pid) {
     if (!sb) return;
     if (state._playlistTracks && currentPlaylistId === pid && state._playlistTracks.length) {
@@ -1399,6 +1482,7 @@
   async function createPlaylistFromForm(e) {
     if (e) e.preventDefault();
     if (!sb || !state.user) { openAuth('login'); return; }
+    const editId = ($('#plEditId')?.value || '').trim();
     const title = ($('#plTitle')?.value || '').trim();
     const description = ($('#plDesc')?.value || '').trim();
     const file = $('#plCover')?.files && $('#plCover').files[0];
@@ -1406,9 +1490,9 @@
       showMsg($('#plCreateMsg'), 'نام پلی‌لیست لازم است.', 'error');
       return;
     }
-    showMsg($('#plCreateMsg'), 'در حال ایجاد…', 'info');
-    let cover_url = null;
+    showMsg($('#plCreateMsg'), editId ? 'در حال ذخیره…' : 'در حال ایجاد…', 'info');
     try {
+      let cover_url = null;
       if (file) {
         if (file.size > 5 * 1024 * 1024) throw new Error('حجم کاور حداکثر ۵ مگابایت');
         const ok = /image\/(jpeg|png|webp|gif)/i.test(file.type) || /\.(jpe?g|png|webp|gif)$/i.test(file.name);
@@ -1418,19 +1502,29 @@
         await uploadWithProgress('covers', path, file, file.type || 'image/jpeg', null);
         cover_url = sb.storage.from('covers').getPublicUrl(path).data.publicUrl;
       }
-      const isOwner = !!state.isOwner;
-      const { error } = await sb.from('playlists').insert({
-        user_id: state.user.id,
-        title: title,
-        description: description || null,
-        cover_url: cover_url,
-        is_public: isOwner,
-        is_official: isOwner
-      });
-      if (error) throw error;
-      showMsg($('#plCreateMsg'), 'ساخته شد.', 'ok');
-      closePlaylistCreate();
-      await loadPlaylists();
+      if (editId) {
+        const patch = { title: title, description: description || null };
+        if (cover_url) patch.cover_url = cover_url;
+        const { error } = await sb.from('playlists').update(patch).eq('id', editId);
+        if (error) throw error;
+        showMsg($('#plCreateMsg'), 'ذخیره شد.', 'ok');
+        closePlaylistCreate();
+        await openPlaylistDetail(editId);
+      } else {
+        const isOwner = !!state.isOwner;
+        const { error } = await sb.from('playlists').insert({
+          user_id: state.user.id,
+          title: title,
+          description: description || null,
+          cover_url: cover_url,
+          is_public: isOwner,
+          is_official: isOwner
+        });
+        if (error) throw error;
+        showMsg($('#plCreateMsg'), 'ساخته شد.', 'ok');
+        closePlaylistCreate();
+        await loadPlaylists();
+      }
     } catch (err) {
       showMsg($('#plCreateMsg'), err.message || 'خطا', 'error');
     }
@@ -2064,11 +2158,12 @@
     $('#subCover')?.addEventListener('change', () => setFileSizeHint('#subCover', '#subCoverSize'));
     $('#subAudio')?.addEventListener('change', () => setFileSizeHint('#subAudio', '#subAudioSize'));
     $('#btnSubmitOpen')?.addEventListener('click', () => {
+      targetPlaylistId = null;
       if (!state.user) openAuth('login');
       else $('#submitOverlay')?.classList.add('open');
     });
-    $('#btnSubmitTrack')?.addEventListener('click', () => $('#submitOverlay')?.classList.add('open'));
-    $('#submitClose')?.addEventListener('click', () => $('#submitOverlay')?.classList.remove('open'));
+    $('#btnSubmitTrack')?.addEventListener('click', () => { targetPlaylistId = null; $('#submitOverlay')?.classList.add('open'); });
+    $('#submitClose')?.addEventListener('click', () => { targetPlaylistId = null; $('#submitOverlay')?.classList.remove('open'); });
     $('#btnEditProfile')?.addEventListener('click', () => {
       if (!state.profile) return;
       $('#epUsername').value = state.profile.username || '';
@@ -2088,6 +2183,10 @@
     $('#playlistCreateOverlay')?.addEventListener('click', e => { if (e.target.id === 'playlistCreateOverlay') closePlaylistCreate(); });
     $('#btnPlaylistBack')?.addEventListener('click', () => loadPlaylists());
     $('#btnPlaylistPlayAll')?.addEventListener('click', () => { if (currentPlaylistId) playPlaylist(currentPlaylistId); });
+    $('#btnPlaylistEdit')?.addEventListener('click', openPlaylistEdit);
+    $('#btnPlaylistDelete')?.addEventListener('click', deleteCurrentPlaylist);
+    $('#btnPlaylistAddTrack')?.addEventListener('click', openPlaylistTrackUpload);
+
     $('#playlistPickClose')?.addEventListener('click', closePlaylistPick);
     $('#playlistPickOverlay')?.addEventListener('click', e => { if (e.target.id === 'playlistPickOverlay') closePlaylistPick(); });
     $('#playlistPickNew')?.addEventListener('click', () => { closePlaylistPick(); openPlaylistCreate(); });

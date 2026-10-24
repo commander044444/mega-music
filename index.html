@@ -31,7 +31,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Vazirmatn:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="styles.css?v=playlist2">
+  <link rel="stylesheet" href="styles.css?v=pledit1">
 
   <script type="application/ld+json">
   {
@@ -148,8 +148,11 @@
           <span style="width:40px"></span>
         </div>
         <div id="playlistDetailHero" class="pl-detail-hero"></div>
-        <div class="pl-detail-actions">
+        <div class="pl-detail-actions" id="playlistDetailActions">
           <button type="button" class="btn btn-primary" id="btnPlaylistPlayAll">پخش همه</button>
+          <button type="button" class="btn btn-ghost btn-sm hidden" id="btnPlaylistAddTrack">افزودن آهنگ</button>
+          <button type="button" class="btn btn-ghost btn-sm hidden" id="btnPlaylistEdit">ویرایش</button>
+          <button type="button" class="btn btn-danger btn-sm hidden" id="btnPlaylistDelete">حذف</button>
         </div>
         <div id="playlistDetailTracks" class="track-list"></div>
         <div id="playlistDetailEmpty" class="empty-state hidden">
@@ -163,16 +166,19 @@
     <div id="playlistCreateOverlay" class="overlay" role="dialog" aria-modal="true">
       <div class="modal">
         <div class="modal-header">
-          <h3>ساخت پلی‌لیست</h3>
+          <h3 id="playlistFormTitle">ساخت پلی‌لیست</h3>
           <button type="button" class="modal-close" id="playlistCreateClose" aria-label="بستن"><svg><use href="icons.svg#icon-close"></use></svg></button>
         </div>
         <form id="playlistCreateForm">
+          <input type="hidden" id="plEditId" value="">
           <div class="form-group"><label>نام پلی‌لیست *</label><input id="plTitle" required maxlength="80" placeholder="مثلاً مورد علاقه‌ها"></div>
           <div class="form-group"><label>توضیح (اختیاری)</label><textarea id="plDesc" rows="2" maxlength="300"></textarea></div>
-          <div class="form-group"><label>کاور / پروفایل پلی‌لیست</label><input type="file" id="plCover" accept="image/jpeg,image/png,image/webp,image/gif"></div>
+          <div class="form-group"><label>کاور / پروفایل پلی‌لیست</label><input type="file" id="plCover" accept="image/jpeg,image/png,image/webp,image/gif">
+            <div id="plCoverPreview" class="ad-image-preview hidden"></div>
+          </div>
           <p id="plVisibilityHint" class="msg msg-info" style="font-size:0.78rem"></p>
           <div id="plCreateMsg"></div>
-          <button type="submit" class="btn btn-primary">ایجاد</button>
+          <button type="submit" class="btn btn-primary" id="plFormSubmitBtn">ایجاد</button>
         </form>
       </div>
     </div>
@@ -423,6 +429,6 @@
   <audio id="mainAudio" preload="metadata"></audio>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
   <script src="config.js"></script>
-  <script src="app.js?v=playlist2"></script>
+  <script src="app.js?v=pledit1"></script>
 </body>
 </html>
