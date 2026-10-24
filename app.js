@@ -19,6 +19,8 @@
   const MAX_COVER = 5 * 1024 * 1024;
   const AUDIO_OK = ['audio/mpeg', 'audio/mp3', 'audio/wav', 'audio/ogg', 'audio/x-wav', 'audio/webm'];
   const COVER_OK = ['image/jpeg', 'image/png', 'image/webp'];
+  const AD_IMAGE_OK = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
+  const MAX_AD_IMAGE = 8 * 1024 * 1024; // 8MB — includes GIF
 
   const STATUS_FA = {
     draft: 'پیش‌نویس', pending: 'در انتظار بررسی', in_review: 'در حال بررسی',
@@ -1775,7 +1777,7 @@
 
     box.innerHTML = `
       <form id="adCreateForm" class="admin-ad-form">
-        <p class="msg msg-info">کمپین جدید (فقط HTTPS). جایگاه: home_hero / home_secondary / catalog_top</p>
+        <p class="msg msg-info">کمپین جدید: تصویر را از گوشی/کامپیوتر انتخاب کنید (JPG، PNG، WebP یا GIF تا ۸ مگابایت). لینک مقصد باید HTTPS باشد.</p>
         <div class="form-group"><label>نام</label><input id="adName" required maxlength="120"></div>
         <div class="form-group"><label>جایگاه</label>
           <select id="adPlacement">
@@ -1784,39 +1786,111 @@
             <option value="catalog_top">بالای فهرست آهنگ‌ها</option>
           </select>
         </div>
-        <div class="form-group"><label>آدرس تصویر (HTTPS عمومی)</label><input id="adImage" type="url" required placeholder="https://..."></div>
-        <div class="form-group"><label>لینک مقصد (HTTPS)</label><input id="adDest" type="url" required placeholder="https://..."></div>
+        <div class="form-group">
+          <label for="adImageFile">آپلود تصویر / گیف از دستگاه *</label>
+          <input type="file" id="adImageFile" accept="image/jpeg,image/png,image/webp,image/gif,.jpg,.jpeg,.png,.webp,.gif">
+          <div class="file-size-hint" id="adImageFileHint"></div>
+          <div id="adImagePreview" class="ad-image-preview hidden"></div>
+        </div>
+        <div class="form-group">
+          <label for="adImage">یا آدرس تصویر آماده (اختیاری اگر فایل انتخاب شده)</label>
+          <input id="adImage" type="url" placeholder="https://...">
+        </div>
+        <div class="form-group"><label>لینک مقصد (HTTPS) *</label><input id="adDest" type="url" required placeholder="https://..."></div>
         <div class="form-group"><label>متن جایگزین</label><input id="adAlt" maxlength="120" value="تبلیغ"></div>
         <div class="form-row-2">
           <div class="form-group"><label>شروع (اختیاری)</label><input id="adStart" type="datetime-local"></div>
           <div class="form-group"><label>پایان (اختیاری)</label><input id="adEnd" type="datetime-local"></div>
         </div>
         <div class="form-group"><label>اولویت</label><input id="adPriority" type="number" value="0"></div>
-        <button type="submit" class="btn btn-primary">ایجاد و فعال‌سازی</button>
+        <div id="adUploadMsg"></div>
+        <button type="submit" class="btn btn-primary" id="adSubmitBtn">آپلود و فعال‌سازی</button>
       </form>
       <div class="admin-list" style="margin-top:14px">${list}</div>`;
 
+    const fileInput = $('#adImageFile');
+    fileInput?.addEventListener('change', () => {
+      const f = fileInput.files && fileInput.files[0];
+      const hint = $('#adImageFileHint');
+      const prev = $('#adImagePreview');
+      if (!f) {
+        if (hint) hint.textContent = '';
+        if (prev) { prev.classList.add('hidden'); prev.innerHTML = ''; }
+        return;
+      }
+      if (hint) hint.textContent = `انتخاب‌شده: ${f.name} · ${(f.size / (1024 * 1024)).toFixed(2)} مگابایت`;
+      if (prev) {
+        const url = URL.createObjectURL(f);
+        prev.classList.remove('hidden');
+        prev.innerHTML = `<img src="${url}" alt="پیش‌نمایش" style="max-width:100%;max-height:140px;border-radius:12px;object-fit:cover">`;
+      }
+    });
+
     $('#adCreateForm')?.addEventListener('submit', async (e) => {
       e.preventDefault();
-      if (!state.isOwner) return;
+      if (!state.isOwner || !sb) return;
+      const btn = $('#adSubmitBtn');
+      const msg = $('#adUploadMsg');
       const name = $('#adName').value.trim();
       const placement = $('#adPlacement').value;
-      const image_url = $('#adImage').value.trim();
       const destination_url = $('#adDest').value.trim();
       const alt_text = ($('#adAlt').value || 'تبلیغ').trim();
       const priority = Number($('#adPriority').value) || 0;
       const starts_at = $('#adStart').value ? new Date($('#adStart').value).toISOString() : null;
       const ends_at = $('#adEnd').value ? new Date($('#adEnd').value).toISOString() : null;
-      if (!isSafeHttpsUrl(image_url) || !isSafeHttpsUrl(destination_url)) {
-        alert('آدرس تصویر و مقصد باید HTTPS معتبر باشند.');
+      const file = fileInput && fileInput.files && fileInput.files[0];
+      let image_url = ($('#adImage').value || '').trim();
+
+      if (!isSafeHttpsUrl(destination_url)) {
+        showMsg(msg, 'لینک مقصد باید HTTPS معتبر باشد.', 'error');
         return;
       }
+
+      if (file) {
+        const mime = (file.type || '').toLowerCase();
+        const nameOk = /\.(jpe?g|png|webp|gif)$/i.test(file.name);
+        if (!AD_IMAGE_OK.includes(mime) && !nameOk) {
+          showMsg(msg, 'فرمت مجاز: JPG، PNG، WebP یا GIF.', 'error');
+          return;
+        }
+        if (file.size > MAX_AD_IMAGE) {
+          showMsg(msg, 'حجم تصویر حداکثر ۸ مگابایت است.', 'error');
+          return;
+        }
+        if (btn) btn.disabled = true;
+        showMsg(msg, 'در حال آپلود تصویر از دستگاه…', 'info');
+        try {
+          const safe = file.name.replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 80);
+          const path = `${state.user.id}/ads/${Date.now()}-${safe}`;
+          const contentType = mime || (nameOk && file.name.toLowerCase().endsWith('.gif') ? 'image/gif' : 'image/jpeg');
+          await uploadWithProgress('covers', path, file, contentType, null);
+          image_url = sb.storage.from('covers').getPublicUrl(path).data.publicUrl;
+        } catch (upErr) {
+          showMsg(msg, upErr.message || 'آپلود تصویر ناموفق بود.', 'error');
+          if (btn) btn.disabled = false;
+          return;
+        }
+      }
+
+      if (!image_url || !isSafeHttpsUrl(image_url)) {
+        showMsg(msg, 'یک فایل از دستگاه انتخاب کنید یا آدرس HTTPS تصویر وارد کنید.', 'error');
+        if (btn) btn.disabled = false;
+        return;
+      }
+
+      if (btn) btn.disabled = true;
+      showMsg(msg, 'در حال ثبت کمپین…', 'info');
       const { error } = await sb.from('ad_campaigns').insert({
         name, placement, image_url, destination_url, alt_text, priority,
         status: 'active', starts_at, ends_at, created_by: state.user.id
       });
-      if (error) alert(error.message);
-      else loadAdmin('ads');
+      if (btn) btn.disabled = false;
+      if (error) showMsg(msg, error.message, 'error');
+      else {
+        showMsg(msg, 'کمپین فعال شد.', 'ok');
+        loadAdmin('ads');
+        loadPublicAds();
+      }
     });
   }
 
