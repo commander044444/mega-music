@@ -126,3 +126,11 @@ UPDATE public.profiles SET created_at = now() WHERE id = auth.uid();
 5. با لغو تیک آبی، `can_auto_publish` هم خاموش می‌شود.
 
 SQL: بعد از migration-001، فایل `migration-002-auto-publish.sql` را در SQL Editor اجرا کنید.
+
+
+## MEGA MUSIC 2.0 — تبلیغات
+
+1. فایل `migration-003-ads.sql` را در SQL Editor اجرا کنید.
+2. با حساب مالک → پنل مدیریت → تب **تبلیغات** کمپین بسازید.
+3. فقط URLهای **HTTPS** برای تصویر و مقصد مجازند.
+4. نمایش‌ها و کلیک‌ها در `ad_events` ثبت می‌شوند (نه کاربران یکتا).

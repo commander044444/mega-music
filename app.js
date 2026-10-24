@@ -44,7 +44,8 @@
     pendingAuth: null, // { email, password } after rate-limited signup
     authBusy: false,
     viewingUserId: null,
-    likedIds: new Set()
+    likedIds: new Set(),
+    adImpressionSent: new Set()
   };
 
   const $ = (s, r = document) => r.querySelector(s);
@@ -93,6 +94,8 @@
     } catch (e) { console.warn(e); }
     renderTracks();
     updateCount();
+    try { await loadHomeDiscovery(); } catch (e) { console.warn(e); }
+    try { await loadPublicAds(); } catch (e) { console.warn(e); }
   }
 
   function mapTrack(t) {
@@ -1349,6 +1352,8 @@
               ${state.isOwner && u.role !== 'owner' && u.is_verified ? `<button type="button" class="btn btn-ghost btn-sm" data-autopub="${u.id}" data-ap="${u.can_auto_publish ? 'true' : 'false'}">${u.can_auto_publish ? 'خاموش کردن انتشار خودکار' : 'فعال‌سازی انتشار بدون بررسی'}</button>` : ''}
             </div>
           </div>`).join('')}</div>`;
+      } else if (tab === 'ads') {
+        await loadAdminAds(box);
       } else if (tab === 'tracks') {
         const { data } = await sb.from('tracks')
           .select('id, title, artist_name, status, created_at')
@@ -1601,6 +1606,199 @@
 
     if (sb) sb.auth.onAuthStateChange(() => refreshSession());
   }
+
+
+  // ---------- Home discovery (real data only) ----------
+  async function loadHomeDiscovery() {
+    if (!sb) return;
+    const strip = $('#verifiedArtistsStrip');
+    const section = $('#verifiedArtistsSection');
+    if (!strip || !section) return;
+    const { data, error } = await sb.from('profiles')
+      .select('id, username, display_name, avatar_url, is_verified, role')
+      .eq('is_verified', true)
+      .order('username', { ascending: true })
+      .limit(24);
+    if (error || !data || !data.length) {
+      section.hidden = true;
+      strip.innerHTML = '';
+      return;
+    }
+    section.hidden = false;
+    strip.innerHTML = data.map(u => {
+      const name = escapeHtml(u.display_name || u.username || 'هنرمند');
+      const art = u.avatar_url
+        ? `<img src="${escapeHtml(u.avatar_url)}" alt="" loading="lazy" width="64" height="64">`
+        : `<span class="artist-ph">♪</span>`;
+      return `<button type="button" class="artist-chip" data-kind="user" data-uid="${escapeHtml(u.id)}" role="listitem">
+        ${art}<div class="name">${name}</div></button>`;
+    }).join('');
+  }
+
+  // ---------- Ads (public render + owner admin) ----------
+  function isSafeHttpsUrl(url) {
+    try {
+      const u = new URL(String(url || ''));
+      return u.protocol === 'https:';
+    } catch {
+      return false;
+    }
+  }
+
+  async function loadPublicAds() {
+    if (!sb) return;
+    const placements = ['home_hero', 'home_secondary', 'catalog_top'];
+    const slotMap = {
+      home_hero: '#adSlotHomeHero',
+      home_secondary: '#adSlotHomeSecondary',
+      catalog_top: '#adSlotCatalogTop'
+    };
+    let rows = [];
+    try {
+      const { data, error } = await sb.from('ad_campaigns')
+        .select('id, name, placement, image_url, destination_url, alt_text, priority, status, starts_at, ends_at')
+        .eq('status', 'active')
+        .order('priority', { ascending: false })
+        .limit(30);
+      if (error) {
+        // table may not exist yet
+        placements.forEach(pl => {
+          const el = $(slotMap[pl]);
+          if (el) { el.classList.add('hidden'); el.innerHTML = ''; }
+        });
+        return;
+      }
+      const now = Date.now();
+      rows = (data || []).filter(c => {
+        if (!isSafeHttpsUrl(c.destination_url) || !c.image_url) return false;
+        if (c.starts_at && new Date(c.starts_at).getTime() > now) return false;
+        if (c.ends_at && new Date(c.ends_at).getTime() <= now) return false;
+        return true;
+      });
+    } catch (e) {
+      console.warn('ads', e);
+      return;
+    }
+    placements.forEach(pl => {
+      const el = $(slotMap[pl]);
+      if (!el) return;
+      const pick = rows.filter(r => r.placement === pl).sort((a, b) => (b.priority || 0) - (a.priority || 0))[0];
+      if (!pick) {
+        el.classList.add('hidden');
+        el.innerHTML = '';
+        return;
+      }
+      el.classList.remove('hidden');
+      el.innerHTML = `<span class="ad-label">تبلیغ</span>
+        <a href="${escapeHtml(pick.destination_url)}" target="_blank" rel="noopener noreferrer sponsored"
+           data-ad-click="${escapeHtml(pick.id)}">
+          <img src="${escapeHtml(pick.image_url)}" alt="${escapeHtml(pick.alt_text || 'تبلیغ')}" loading="lazy">
+        </a>`;
+      recordAdEvent(pick.id, 'impression');
+    });
+  }
+
+  async function recordAdEvent(campaignId, eventType) {
+    if (!sb || !campaignId) return;
+    if (eventType === 'impression') {
+      if (state.adImpressionSent.has(campaignId)) return;
+      state.adImpressionSent.add(campaignId);
+    }
+    try {
+      await sb.from('ad_events').insert({ campaign_id: campaignId, event_type: eventType });
+    } catch (e) {
+      // ignore analytics failures — never invent counts
+    }
+  }
+
+  async function loadAdminAds(box) {
+    if (!state.isOwner) {
+      box.innerHTML = '<p class="msg msg-error">فقط مالک.</p>';
+      return;
+    }
+    const { data: campaigns, error } = await sb.from('ad_campaigns')
+      .select('*')
+      .order('created_at', { ascending: false })
+      .limit(40);
+    if (error) {
+      box.innerHTML = `<p class="msg msg-error">جدول تبلیغات آماده نیست. migration-003-ads.sql را در Supabase اجرا کنید.<br>${escapeHtml(error.message)}</p>`;
+      return;
+    }
+    // counts
+    const ids = (campaigns || []).map(c => c.id);
+    let counts = {};
+    if (ids.length) {
+      const { data: evs } = await sb.from('ad_events').select('campaign_id, event_type').in('campaign_id', ids);
+      (evs || []).forEach(e => {
+        const k = e.campaign_id;
+        if (!counts[k]) counts[k] = { impression: 0, click: 0 };
+        if (e.event_type === 'impression') counts[k].impression++;
+        if (e.event_type === 'click') counts[k].click++;
+      });
+    }
+    const list = (campaigns || []).map(c => {
+      const ct = counts[c.id] || { impression: 0, click: 0 };
+      const ctr = ct.impression > 0 ? ((ct.click / ct.impression) * 100).toFixed(1) + '%' : '—';
+      return `<div class="admin-item">
+        <strong>${escapeHtml(c.name)}</strong>
+        <span class="status-pill status-${c.status === 'active' ? 'published' : 'pending'}">${escapeHtml(c.status)}</span>
+        <div style="font-size:0.75rem;color:var(--text-dim);margin-top:4px">
+          ${escapeHtml(c.placement)} · نمایش: ${ct.impression} · کلیک: ${ct.click} · CTR: ${ctr}
+        </div>
+        <div class="actions">
+          <button type="button" class="btn btn-ghost btn-sm" data-ad-status="${escapeHtml(c.id)}" data-to="${c.status === 'active' ? 'paused' : 'active'}">${c.status === 'active' ? 'توقف' : 'فعال'}</button>
+          <button type="button" class="btn btn-danger btn-sm" data-ad-del="${escapeHtml(c.id)}">حذف</button>
+        </div>
+      </div>`;
+    }).join('') || '<p class="msg msg-info">هنوز کمپینی نیست.</p>';
+
+    box.innerHTML = `
+      <form id="adCreateForm" class="admin-ad-form">
+        <p class="msg msg-info">کمپین جدید (فقط HTTPS). جایگاه: home_hero / home_secondary / catalog_top</p>
+        <div class="form-group"><label>نام</label><input id="adName" required maxlength="120"></div>
+        <div class="form-group"><label>جایگاه</label>
+          <select id="adPlacement">
+            <option value="home_hero">بنر اصلی خانه</option>
+            <option value="home_secondary">بنر دوم خانه</option>
+            <option value="catalog_top">بالای فهرست آهنگ‌ها</option>
+          </select>
+        </div>
+        <div class="form-group"><label>آدرس تصویر (HTTPS عمومی)</label><input id="adImage" type="url" required placeholder="https://..."></div>
+        <div class="form-group"><label>لینک مقصد (HTTPS)</label><input id="adDest" type="url" required placeholder="https://..."></div>
+        <div class="form-group"><label>متن جایگزین</label><input id="adAlt" maxlength="120" value="تبلیغ"></div>
+        <div class="form-row-2">
+          <div class="form-group"><label>شروع (اختیاری)</label><input id="adStart" type="datetime-local"></div>
+          <div class="form-group"><label>پایان (اختیاری)</label><input id="adEnd" type="datetime-local"></div>
+        </div>
+        <div class="form-group"><label>اولویت</label><input id="adPriority" type="number" value="0"></div>
+        <button type="submit" class="btn btn-primary">ایجاد و فعال‌سازی</button>
+      </form>
+      <div class="admin-list" style="margin-top:14px">${list}</div>`;
+
+    $('#adCreateForm')?.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      if (!state.isOwner) return;
+      const name = $('#adName').value.trim();
+      const placement = $('#adPlacement').value;
+      const image_url = $('#adImage').value.trim();
+      const destination_url = $('#adDest').value.trim();
+      const alt_text = ($('#adAlt').value || 'تبلیغ').trim();
+      const priority = Number($('#adPriority').value) || 0;
+      const starts_at = $('#adStart').value ? new Date($('#adStart').value).toISOString() : null;
+      const ends_at = $('#adEnd').value ? new Date($('#adEnd').value).toISOString() : null;
+      if (!isSafeHttpsUrl(image_url) || !isSafeHttpsUrl(destination_url)) {
+        alert('آدرس تصویر و مقصد باید HTTPS معتبر باشند.');
+        return;
+      }
+      const { error } = await sb.from('ad_campaigns').insert({
+        name, placement, image_url, destination_url, alt_text, priority,
+        status: 'active', starts_at, ends_at, created_by: state.user.id
+      });
+      if (error) alert(error.message);
+      else loadAdmin('ads');
+    });
+  }
+
 
   function init() {
     if (!hasSupabase) $('#configBanner')?.classList.remove('hidden');

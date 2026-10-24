@@ -31,7 +31,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Vazirmatn:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="styles.css?v=seo-brand1">
+  <link rel="stylesheet" href="styles.css?v=mm20">
 
   <script type="application/ld+json">
   {
@@ -75,16 +75,29 @@
           <div class="line"></div>
         </div>
       </div>
+      <div id="adSlotHomeHero" class="ad-slot hidden" data-placement="home_hero" aria-label="جایگاه تبلیغ"></div>
       <div class="search-panel">
         <div class="search-box">
           <svg class="s-icon"><use href="icons.svg#icon-search"></use></svg>
           <input type="search" id="searchInput" placeholder="جستجوی آهنگ، کاربر، پلی‌لیست..." autocomplete="off" aria-label="جستجو">
         </div>
       </div>
+      <section class="section-block" id="verifiedArtistsSection" hidden>
+        <div class="section-head">
+          <h2>هنرمندان تأییدشده</h2>
+          <span>مگا وریفاید</span>
+        </div>
+        <div class="artist-strip" id="verifiedArtistsStrip" role="list"></div>
+      </section>
+      <div id="adSlotHomeSecondary" class="ad-slot hidden" data-placement="home_secondary" aria-label="جایگاه تبلیغ"></div>
       <div class="search-cats" id="homeCats" role="tablist">
         <button type="button" class="cat-chip active" data-cat="tracks">آهنگ‌ها</button>
         <button type="button" class="cat-chip" data-cat="users">کاربران</button>
         <button type="button" class="cat-chip" data-cat="playlists">پلی‌لیست‌ها</button>
+      </div>
+      <div id="adSlotCatalogTop" class="ad-slot hidden" data-placement="catalog_top" aria-label="جایگاه تبلیغ"></div>
+      <div class="section-block" style="padding-bottom:0">
+        <div class="section-head"><h2>تازه‌ها</h2><span id="homeTracksLabel">منتشرشده</span></div>
       </div>
       <div id="trackList" class="track-list" role="list"></div>
       <div id="emptyState" class="empty-state">
@@ -147,6 +160,7 @@
               <button type="button" data-tab="pending">در انتظار</button>
               <button type="button" data-tab="users">کاربران</button>
               <button type="button" data-tab="tracks">آهنگ‌ها</button>
+              <button type="button" data-tab="ads">تبلیغات</button>
             </div>
             <div id="adminContent"></div>
           </div>
@@ -343,6 +357,6 @@
   <audio id="mainAudio" preload="metadata"></audio>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
   <script src="config.js"></script>
-  <script src="app.js?v=loginfix1"></script>
+  <script src="app.js?v=mm20"></script>
 </body>
 </html>

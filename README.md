@@ -1,3 +1,7 @@
+# MEGA MUSIC 2.0
+
+Persian music platform on GitHub Pages + Supabase.
+
 # MEGA MUSIC
 
 Social music streaming platform on GitHub Pages + Supabase.
