@@ -1428,6 +1428,8 @@
               ${state.isOwner && u.role !== 'owner' && u.is_verified ? `<button type="button" class="btn btn-ghost btn-sm" data-autopub="${u.id}" data-ap="${u.can_auto_publish ? 'true' : 'false'}">${u.can_auto_publish ? 'خاموش کردن انتشار خودکار' : 'فعال‌سازی انتشار بدون بررسی'}</button>` : ''}
             </div>
           </div>`).join('')}</div>`;
+      } else if (tab === 'contacts') {
+        await loadAdminContacts(box);
       } else if (tab === 'ads') {
         await loadAdminAds(box);
       } else if (tab === 'tracks') {
@@ -1519,25 +1521,149 @@
   // ---------- Navigation ----------
 
   // ---------- Contact page ----------
-  function renderContactLinks() {
+  const CONTACT_ICON_OPTIONS = [
+    { id: 'bale', label: 'بله' },
+    { id: 'telegram', label: 'تلگرام' },
+    { id: 'link', label: 'لینک' },
+    { id: 'heart', label: 'قلب' },
+    { id: 'user', label: 'کاربر' }
+  ];
+
+  function contactIconId(icon) {
+    return String(icon || 'link').replace(/^icon-/, '').replace(/[^a-z0-9_-]/gi, '') || 'link';
+  }
+
+  function isSafeHttpsContact(url) {
+    try {
+      const u = new URL(String(url || ''));
+      return u.protocol === 'https:';
+    } catch (e) {
+      return false;
+    }
+  }
+
+  async function fetchContactLinks() {
+    if (sb) {
+      try {
+        const { data, error } = await sb.from('contact_links')
+          .select('id, name, href, icon, sort_order, is_active')
+          .eq('is_active', true)
+          .order('sort_order', { ascending: true })
+          .limit(40);
+        if (!error && data) return data;
+      } catch (e) {
+        console.warn('contact_links', e);
+      }
+    }
+    // Silent fallback (no user-facing setup instructions)
+    const fallback = (cfg.contactLinks && Array.isArray(cfg.contactLinks)) ? cfg.contactLinks : [];
+    return fallback.map(function (item, i) {
+      return {
+        id: 'local-' + i,
+        name: item.name,
+        href: item.href,
+        icon: item.icon || 'link',
+        sort_order: i,
+        is_active: true
+      };
+    });
+  }
+
+  function contactCardHtml(item, i) {
+    const href = String(item.href || '').trim();
+    const name = escapeHtml(item.name || '');
+    const icon = contactIconId(item.icon);
+    if (!isSafeHttpsContact(href) || !name) return '';
+    const delay = (0.05 * (i || 0)).toFixed(2);
+    return '<a class="contact-card" role="listitem" href="' + escapeHtml(href) +
+      '" target="_blank" rel="noopener noreferrer" style="animation-delay:' + delay + 's">' +
+      '<span class="contact-icon-wrap"><svg class="contact-icon" aria-hidden="true"><use href="icons.svg#icon-' +
+      escapeHtml(icon) + '"></use></svg></span>' +
+      '<span class="contact-name">' + name + '</span></a>';
+  }
+
+  async function renderContactLinks() {
     const grid = $('#contactLinksGrid');
     if (!grid) return;
-    const links = (cfg.contactLinks && Array.isArray(cfg.contactLinks)) ? cfg.contactLinks : [];
-    if (!links.length) {
-      grid.innerHTML = '<p class="msg msg-info">هنوز راه ارتباطی ثبت نشده است.</p>';
+    const links = await fetchContactLinks();
+    const html = (links || []).map(contactCardHtml).filter(Boolean).join('');
+    grid.innerHTML = html || '';
+  }
+
+  async function loadAdminContacts(box) {
+    if (!state.isOwner) {
+      box.innerHTML = '<p class="msg msg-error">فقط مالک.</p>';
       return;
     }
-    grid.innerHTML = links.map(function (item, i) {
-      const href = String(item.href || '').trim();
-      const name = escapeHtml(item.name || 'لینک');
-      let icon = String(item.icon || 'link').replace(/^icon-/, '');
-      if (!/^https:\/\//i.test(href)) return '';
-      const delay = (0.05 * i).toFixed(2);
-      return '<a class="contact-card" role="listitem" href="' + escapeHtml(href) + '" target="_blank" rel="noopener noreferrer" style="animation-delay:' + delay + 's">' +
-        '<span class="contact-icon-wrap"><svg class="contact-icon" aria-hidden="true"><use href="icons.svg#icon-' + escapeHtml(icon) + '"></use></svg></span>' +
-        '<span class="contact-name">' + name + '</span>' +
-        '</a>';
-    }).filter(Boolean).join('') || '<p class="msg msg-info">لینک معتبری تعریف نشده.</p>';
+    let rows = [];
+    let tableMissing = false;
+    const { data, error } = await sb.from('contact_links')
+      .select('id, name, href, icon, sort_order, is_active, created_at')
+      .order('sort_order', { ascending: true })
+      .order('created_at', { ascending: true });
+    if (error) {
+      tableMissing = true;
+      box.innerHTML = '<p class="msg msg-error">جدول راه‌های ارتباطی آماده نیست. در Supabase فایل migration-004-contact-links.sql را اجرا کنید.<br>' +
+        escapeHtml(error.message) + '</p>';
+      return;
+    }
+    rows = data || [];
+    const iconOpts = CONTACT_ICON_OPTIONS.map(function (o) {
+      return '<option value="' + o.id + '">' + o.label + ' (' + o.id + ')</option>';
+    }).join('');
+    const list = rows.map(function (r) {
+      return '<div class="admin-item">' +
+        '<strong>' + escapeHtml(r.name) + '</strong> ' +
+        (r.is_active ? '<span class="status-pill status-published">فعال</span>' : '<span class="status-pill status-pending">خاموش</span>') +
+        '<div style="font-size:0.75rem;color:var(--text-dim);margin-top:4px;word-break:break-all">' +
+        '<svg width="14" height="14" style="vertical-align:middle"><use href="icons.svg#icon-' + escapeHtml(contactIconId(r.icon)) + '"></use></svg> ' +
+        escapeHtml(r.icon) + ' · ' + escapeHtml(r.href) +
+        '</div><div class="actions">' +
+        '<button type="button" class="btn btn-ghost btn-sm" data-contact-toggle="' + escapeHtml(r.id) + '" data-on="' + (r.is_active ? 'true' : 'false') + '">' +
+        (r.is_active ? 'خاموش' : 'روشن') + '</button>' +
+        '<button type="button" class="btn btn-danger btn-sm" data-contact-del="' + escapeHtml(r.id) + '">حذف</button>' +
+        '</div></div>';
+    }).join('') || '<p class="msg msg-info">هنوز لینکی ثبت نشده.</p>';
+
+    box.innerHTML =
+      '<div class="msg msg-info" style="font-size:0.8rem;line-height:1.6">' +
+      '<strong>راهنمای مالک:</strong> نام زیر آیکون نمایش داده می‌شود. فقط آدرس‌های HTTPS مجازند. ' +
+      'آیکون را از لیست انتخاب کنید (bale، telegram، link، …). پس از ذخیره، در صفحه «ارتباط» برای همه دیده می‌شود.' +
+      '</div>' +
+      '<form id="contactCreateForm" style="margin-top:12px">' +
+      '<div class="form-group"><label>نام (زیر آیکون)</label><input id="clName" required maxlength="40" placeholder="مثلاً بله"></div>' +
+      '<div class="form-group"><label>آدرس HTTPS</label><input id="clHref" type="url" required placeholder="https://..."></div>' +
+      '<div class="form-group"><label>آیکون SVG</label><select id="clIcon">' + iconOpts + '</select></div>' +
+      '<div class="form-group"><label>ترتیب</label><input id="clSort" type="number" value="0"></div>' +
+      '<div id="clMsg"></div>' +
+      '<button type="submit" class="btn btn-primary">افزودن راه ارتباطی</button>' +
+      '</form>' +
+      '<div class="admin-list" style="margin-top:14px">' + list + '</div>';
+
+    $('#contactCreateForm')?.addEventListener('submit', async function (e) {
+      e.preventDefault();
+      if (!state.isOwner) return;
+      const name = ($('#clName').value || '').trim();
+      const href = ($('#clHref').value || '').trim();
+      const icon = contactIconId($('#clIcon').value);
+      const sort_order = Number($('#clSort').value) || 0;
+      if (!name) { showMsg($('#clMsg'), 'نام لازم است.', 'error'); return; }
+      if (!isSafeHttpsContact(href)) { showMsg($('#clMsg'), 'فقط لینک HTTPS معتبر.', 'error'); return; }
+      const { error: insErr } = await sb.from('contact_links').insert({
+        name: name,
+        href: href,
+        icon: icon,
+        sort_order: sort_order,
+        is_active: true,
+        created_by: state.user.id
+      });
+      if (insErr) showMsg($('#clMsg'), insErr.message, 'error');
+      else {
+        showMsg($('#clMsg'), 'اضافه شد.', 'ok');
+        loadAdmin('contacts');
+        renderContactLinks();
+      }
+    });
   }
 
   function updateEqualizer(playing) {
@@ -1639,6 +1765,27 @@
       }
       const userRow = e.target.closest('[data-kind="user"]');
       if (userRow?.dataset.uid) { openUserProfile(userRow.dataset.uid); return; }
+      const cDel = e.target.closest('[data-contact-del]');
+      if (cDel) {
+        if (!state.isOwner) return;
+        if (!confirm('حذف این راه ارتباطی؟')) return;
+        sb.from('contact_links').delete().eq('id', cDel.getAttribute('data-contact-del')).then(({ error }) => {
+          if (error) alert(error.message);
+          else { loadAdmin('contacts'); renderContactLinks(); }
+        });
+        return;
+      }
+      const cTog = e.target.closest('[data-contact-toggle]');
+      if (cTog) {
+        if (!state.isOwner) return;
+        const on = cTog.getAttribute('data-on') === 'true';
+        sb.from('contact_links').update({ is_active: !on, updated_at: new Date().toISOString() })
+          .eq('id', cTog.getAttribute('data-contact-toggle')).then(({ error }) => {
+          if (error) alert(error.message);
+          else { loadAdmin('contacts'); renderContactLinks(); }
+        });
+        return;
+      }
       const adClick = e.target.closest('[data-ad-click]');
       if (adClick) {
         recordAdEvent(adClick.getAttribute('data-ad-click'), 'click');
