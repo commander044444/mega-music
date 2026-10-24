@@ -31,7 +31,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Vazirmatn:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="styles.css?v=searchanim1">
+  <link rel="stylesheet" href="styles.css?v=contact1">
 
   <script type="application/ld+json">
   {
@@ -139,6 +139,17 @@
       </div>
     </div>
 
+
+    <!-- CONTACT -->
+    <div id="view-contact" class="view">
+      <div class="panel contact-panel">
+        <h2 class="contact-title">راه‌های ارتباطی</h2>
+        <p class="contact-lead">از طریق پیام‌رسان‌ها و لینک‌های زیر با ما در ارتباط باشید.</p>
+        <div class="contact-grid" id="contactLinksGrid" role="list"></div>
+        <p class="contact-hint msg msg-info">برای افزودن لینک جدید، در config.js آرایه <code>contactLinks</code> را ویرایش کنید.</p>
+      </div>
+    </div>
+
     <!-- PROFILE / MORE -->
     <div id="view-more" class="view">
       <div class="panel">
@@ -204,7 +215,12 @@
         <span style="font-size:0.85rem;color:var(--text-muted)">در حال پخش</span>
         <button type="button" class="icon-btn" id="fpClose" aria-label="بستن"><svg><use href="icons.svg#icon-close"></use></svg></button>
       </div>
-      <div class="fp-art-wrap"><img id="fpArt" class="fp-art" src="" alt=""></div>
+      <div class="fp-art-wrap">
+        <img id="fpArt" class="fp-art" src="" alt="">
+        <div id="fpEqualizer" class="fp-equalizer" aria-hidden="true">
+          <span></span><span></span><span></span><span></span><span></span><span></span><span></span>
+        </div>
+      </div>
       <div class="fp-meta">
         <div id="fpTitle" class="fp-title">—</div>
         <div class="fp-artist"><a href="#" id="fpArtistLink">—</a></div>
@@ -236,7 +252,7 @@
 
   <nav class="bottom-nav" aria-label="ناوبری">
     <button type="button" class="nav-item" data-view="search"><svg><use href="icons.svg#icon-search"></use></svg><span>جستجو</span></button>
-    <button type="button" class="nav-item" data-view="more"><svg><use href="icons.svg#icon-heart"></use></svg><span>ارتباط</span></button>
+    <button type="button" class="nav-item" data-view="contact"><svg><use href="icons.svg#icon-bale"></use></svg><span>ارتباط</span></button>
     <button type="button" class="nav-item center active" data-view="home"><div class="center-icon"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg></div><span>خانه</span></button>
     <button type="button" class="nav-item" data-view="playlists"><svg><use href="icons.svg#icon-library"></use></svg><span>پلی‌لیست</span></button>
     <button type="button" class="nav-item" data-view="more"><svg><use href="icons.svg#icon-settings"></use></svg><span>بیشتر</span></button>
@@ -357,6 +373,6 @@
   <audio id="mainAudio" preload="metadata"></audio>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
   <script src="config.js"></script>
-  <script src="app.js?v=searchanim1"></script>
+  <script src="app.js?v=contact1"></script>
 </body>
 </html>

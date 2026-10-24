@@ -354,6 +354,7 @@
     if ($('#fpLyrics')) {
       $('#fpLyrics').textContent = t.lyrics || 'متنی ثبت نشده است.';
     }
+    updateEqualizer(state.isPlaying);
     if ($('#fpShuffle')) $('#fpShuffle').classList.toggle('active', state.shuffle);
     if ($('#fpRepeat')) $('#fpRepeat').classList.toggle('active', state.repeat > 0);
     renderTracks();
@@ -1516,6 +1517,35 @@
   }
 
   // ---------- Navigation ----------
+
+  // ---------- Contact page ----------
+  function renderContactLinks() {
+    const grid = $('#contactLinksGrid');
+    if (!grid) return;
+    const links = (cfg.contactLinks && Array.isArray(cfg.contactLinks)) ? cfg.contactLinks : [];
+    if (!links.length) {
+      grid.innerHTML = '<p class="msg msg-info">هنوز راه ارتباطی ثبت نشده است.</p>';
+      return;
+    }
+    grid.innerHTML = links.map(function (item, i) {
+      const href = String(item.href || '').trim();
+      const name = escapeHtml(item.name || 'لینک');
+      let icon = String(item.icon || 'link').replace(/^icon-/, '');
+      if (!/^https:\/\//i.test(href)) return '';
+      const delay = (0.05 * i).toFixed(2);
+      return '<a class="contact-card" role="listitem" href="' + escapeHtml(href) + '" target="_blank" rel="noopener noreferrer" style="animation-delay:' + delay + 's">' +
+        '<span class="contact-icon-wrap"><svg class="contact-icon" aria-hidden="true"><use href="icons.svg#icon-' + escapeHtml(icon) + '"></use></svg></span>' +
+        '<span class="contact-name">' + name + '</span>' +
+        '</a>';
+    }).filter(Boolean).join('') || '<p class="msg msg-info">لینک معتبری تعریف نشده.</p>';
+  }
+
+  function updateEqualizer(playing) {
+    const eq = $('#fpEqualizer');
+    if (!eq) return;
+    eq.classList.toggle('playing', !!playing);
+  }
+
   function switchView(name) {
     const next = $('#view-' + name);
     if (!next) return;
@@ -1534,6 +1564,7 @@
       n.classList.toggle('active', n.dataset.view === name);
     });
     if (name === 'playlists') loadPlaylists();
+    if (name === 'contact') renderContactLinks();
     if (name === 'home') {
       try {
         renderTracks(state.filtered && state.filtered.length ? state.filtered : state.tracks);
@@ -1692,8 +1723,8 @@
       if (state.repeat === 2) loadTrack(state.currentIndex, true);
       else playNext();
     });
-    a.addEventListener('play', () => { state.isPlaying = true; updatePlayerUI(); });
-    a.addEventListener('pause', () => { state.isPlaying = false; updatePlayerUI(); });
+    a.addEventListener('play', () => { state.isPlaying = true; updateEqualizer(true); updatePlayerUI(); });
+    a.addEventListener('pause', () => { state.isPlaying = false; updateEqualizer(false); updatePlayerUI(); });
     a.volume = state.volume;
 
     $$('.nav-item').forEach(btn => btn.addEventListener('click', () => switchView(btn.dataset.view)));
@@ -2014,6 +2045,7 @@
     checkRecoverySession();
     loadCatalog();
     refreshSession();
+    renderContactLinks();
   }
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);

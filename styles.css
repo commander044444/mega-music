@@ -40,9 +40,18 @@ body::before {
   content: "";
   position: fixed; inset: 0; pointer-events: none; z-index: 0;
   background:
-    radial-gradient(ellipse 70% 45% at 50% -8%, rgba(16,185,129,0.16), transparent 55%),
-    radial-gradient(ellipse 55% 40% at 0% 90%, rgba(225,29,72,0.12), transparent 50%),
-    radial-gradient(ellipse 40% 30% at 100% 40%, rgba(59,130,246,0.06), transparent 50%);
+    radial-gradient(ellipse 80% 50% at 50% -12%, rgba(16,185,129,0.28), transparent 58%),
+    radial-gradient(ellipse 60% 45% at 0% 85%, rgba(225,29,72,0.22), transparent 55%),
+    radial-gradient(ellipse 50% 40% at 100% 35%, rgba(59,130,246,0.14), transparent 50%),
+    radial-gradient(ellipse 40% 30% at 50% 100%, rgba(16,185,129,0.1), transparent 60%);
+  filter: blur(2px);
+}
+body::after {
+  content: "";
+  position: fixed; inset: 0; pointer-events: none; z-index: 0;
+  backdrop-filter: blur(28px) saturate(1.25);
+  -webkit-backdrop-filter: blur(28px) saturate(1.25);
+  background: rgba(5, 7, 10, 0.35);
 }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
@@ -673,4 +682,82 @@ body::before {
   .hero-title, .hero-brand-en, .hero-intro, .hero-sub {
     animation: none !important;
   }
+}
+
+/* Contact */
+.contact-panel { padding-top: 8px; }
+.contact-title {
+  text-align: center; font-size: 1.25rem; margin-bottom: 8px;
+  background: linear-gradient(90deg, #fff, var(--accent));
+  -webkit-background-clip: text; background-clip: text; color: transparent;
+}
+.contact-lead {
+  text-align: center; color: var(--text-muted); font-size: 0.88rem;
+  margin-bottom: 20px; line-height: 1.6;
+}
+.contact-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
+  gap: 14px;
+  margin-bottom: 18px;
+}
+.contact-card {
+  display: flex; flex-direction: column; align-items: center; gap: 10px;
+  padding: 16px 10px;
+  border-radius: 18px;
+  background: var(--bg-glass-strong);
+  border: 1px solid var(--border);
+  color: var(--text);
+  text-decoration: none;
+  transition: transform 0.25s ease, box-shadow 0.3s ease, border-color 0.25s ease;
+  animation: mmPop 0.45s cubic-bezier(0.22, 1, 0.36, 1) both;
+  box-shadow: 0 8px 28px rgba(0,0,0,0.25);
+}
+.contact-card:hover, .contact-card:focus-visible {
+  transform: translateY(-4px) scale(1.03);
+  border-color: rgba(16,185,129,0.45);
+  box-shadow: 0 12px 36px var(--accent-glow);
+}
+.contact-icon-wrap {
+  width: 56px; height: 56px; border-radius: 16px;
+  display: grid; place-items: center;
+  background: linear-gradient(145deg, rgba(16,185,129,0.25), rgba(225,29,72,0.15));
+  box-shadow: 0 0 24px var(--accent-glow);
+}
+.contact-icon { width: 28px; height: 28px; color: #fff; }
+.contact-name { font-size: 0.82rem; font-weight: 600; text-align: center; }
+.contact-hint { font-size: 0.75rem; }
+
+/* Full player equalizer */
+.fp-art-wrap { position: relative; }
+.fp-equalizer {
+  display: flex; align-items: flex-end; justify-content: center; gap: 4px;
+  height: 36px; margin-top: 14px;
+  opacity: 0.35;
+  transition: opacity 0.3s ease;
+}
+.fp-equalizer.playing { opacity: 1; }
+.fp-equalizer span {
+  width: 5px; border-radius: 4px;
+  background: linear-gradient(180deg, var(--accent), var(--red));
+  height: 30%;
+  animation: none;
+}
+.fp-equalizer.playing span {
+  animation: eqBar 0.9s ease-in-out infinite alternate;
+}
+.fp-equalizer.playing span:nth-child(1) { animation-delay: 0.05s; }
+.fp-equalizer.playing span:nth-child(2) { animation-delay: 0.15s; height: 50%; }
+.fp-equalizer.playing span:nth-child(3) { animation-delay: 0.0s; }
+.fp-equalizer.playing span:nth-child(4) { animation-delay: 0.25s; height: 70%; }
+.fp-equalizer.playing span:nth-child(5) { animation-delay: 0.1s; }
+.fp-equalizer.playing span:nth-child(6) { animation-delay: 0.2s; height: 45%; }
+.fp-equalizer.playing span:nth-child(7) { animation-delay: 0.12s; }
+@keyframes eqBar {
+  from { height: 18%; }
+  to { height: 100%; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .fp-equalizer.playing span { animation: none; height: 40%; }
+  .contact-card { animation: none; }
 }
