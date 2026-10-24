@@ -1,11 +1,5 @@
 /**
- * MEGA MUSIC — Public configuration only
- * NEVER put service-role keys or secrets here.
- *
- * contactLinks: list of contact channels shown on «ارتباط»
- *   name  = label under icon
- *   href  = full https URL
- *   icon  = id in icons.svg without # (e.g. icon-bale → "bale")
+ * MEGA MUSIC — public config only (no secrets).
  */
 window.MEGA_CONFIG = {
   supabaseUrl: 'https://dwkooutnyhzsdomvcois.supabase.co',
