@@ -349,20 +349,93 @@
   function closeFullPlayer() { $('#fullPlayer')?.classList.remove('open'); }
 
   // ---------- Auth ----------
+  function profileFromUser(user) {
+    const meta = (user && user.user_metadata) || {};
+    return {
+      id: user.id,
+      username: meta.username || (user.email ? String(user.email).split('@')[0] : 'user'),
+      display_name: meta.display_name || meta.username || 'کاربر',
+      role: 'user',
+      avatar_url: null,
+      bio: null,
+      is_verified: false,
+      is_banned: false,
+      banned_until: null,
+      can_auto_publish: false,
+      _fallback: true
+    };
+  }
+
+  async function fetchProfile(userId) {
+    // Prefer full columns; fall back if migration-002 not applied yet
+    const fullCols = 'id, username, display_name, role, avatar_url, bio, is_verified, is_banned, banned_until, can_auto_publish';
+    const baseCols = 'id, username, display_name, role, avatar_url, bio, is_verified, is_banned, banned_until';
+    let res = await sb.from('profiles').select(fullCols).eq('id', userId).maybeSingle();
+    if (res.error && /can_auto_publish|column/i.test(res.error.message || '')) {
+      res = await sb.from('profiles').select(baseCols).eq('id', userId).maybeSingle();
+      if (res.data) res.data.can_auto_publish = false;
+    }
+    return res;
+  }
+
+  async function ensureProfileRow(user) {
+    if (!user) return null;
+    // Client usually cannot INSERT profiles (trigger on auth.users does).
+    // Re-select only; UI falls back to profileFromUser if still missing.
+    const again = await fetchProfile(user.id);
+    return (again && again.data) || null;
+  }
+
   async function refreshSession() {
-    if (!sb) { state.user = null; state.profile = null; state.isOwner = false; state.isStaff = false; updateAuthUI(); return; }
-    const { data: { session } } = await sb.auth.getSession();
-    state.user = session?.user || null;
-    if (state.user) {
-      const { data: profile } = await sb.from('profiles')
-        .select('id, username, display_name, role, avatar_url, bio, is_verified, is_banned, banned_until, can_auto_publish')
-        .eq('id', state.user.id).maybeSingle();
-      state.profile = profile;
-      state.isOwner = profile?.role === 'owner';
-      state.isStaff = profile?.role === 'owner' || profile?.role === 'admin';
-      await loadLikes();
-    } else {
-      state.profile = null; state.isOwner = false; state.isStaff = false;
+    if (!sb) {
+      state.user = null;
+      state.profile = null;
+      state.isOwner = false;
+      state.isStaff = false;
+      updateAuthUI();
+      return;
+    }
+    try {
+      const { data: sessWrap, error: sessErr } = await sb.auth.getSession();
+      if (sessErr) console.warn('getSession', sessErr);
+      const session = sessWrap && sessWrap.session;
+      state.user = (session && session.user) || null;
+
+      if (state.user) {
+        let profile = null;
+        try {
+          const { data, error } = await fetchProfile(state.user.id);
+          if (error) console.warn('profile fetch', error);
+          profile = data || null;
+        } catch (e) {
+          console.warn('profile fetch exception', e);
+        }
+
+        if (!profile) {
+          try {
+            profile = await ensureProfileRow(state.user);
+          } catch (e) {
+            console.warn('ensureProfile', e);
+          }
+        }
+
+        // Always allow UI if Auth session exists (even with fallback profile)
+        state.profile = profile || profileFromUser(state.user);
+        state.isOwner = state.profile.role === 'owner';
+        state.isStaff = state.profile.role === 'owner' || state.profile.role === 'admin';
+        try {
+          await loadLikes();
+        } catch (e) {
+          console.warn('loadLikes', e);
+        }
+      } else {
+        state.profile = null;
+        state.isOwner = false;
+        state.isStaff = false;
+        state.likedIds = new Set();
+      }
+    } catch (e) {
+      console.error('refreshSession', e);
     }
     updateAuthUI();
   }
@@ -370,35 +443,40 @@
   async function loadLikes() {
     state.likedIds = new Set();
     if (!sb || !state.user) return;
-    const { data } = await sb.from('likes').select('track_id').eq('user_id', state.user.id);
+    const { data, error } = await sb.from('likes').select('track_id').eq('user_id', state.user.id);
+    if (error) return;
     (data || []).forEach(r => state.likedIds.add(r.track_id));
   }
 
   function updateAuthUI() {
-    if (state.user && state.profile) {
+    // Logged-in UI requires Auth user; profile may be fallback
+    if (state.user) {
       $('#profileGuest')?.classList.add('hidden');
       $('#profileUser')?.classList.remove('hidden');
-      const p = state.profile;
+      const p = state.profile || profileFromUser(state.user);
       const badge = (p.is_verified || p.role === 'owner') ? verifiedBadge() : '';
       const banned = p.is_banned ? '<p class="msg msg-error">حساب شما محدود شده است.</p>' : '';
       const emailOk = isEmailConfirmed(state.user);
       const emailNote = emailOk
         ? '<p class="msg msg-ok" style="margin-top:8px">ایمیل تأیید شده است.</p>'
         : '<p class="msg msg-info" style="margin-top:8px">ایمیل هنوز تأیید نشده است (وضعیت Auth).</p>';
-      $('#myProfileHeader').innerHTML = `
+      const header = $('#myProfileHeader');
+      if (header) {
+        header.innerHTML = `
         <img class="profile-avatar" src="${escapeHtml(p.avatar_url || '')}" alt="" onerror="this.src=''">
-        <div class="profile-name">${escapeHtml(p.display_name || p.username || '')} ${badge}</div>
+        <div class="profile-name">${escapeHtml(p.display_name || p.username || state.user.email || '')} ${badge}</div>
         <div class="profile-handle">@${escapeHtml(p.username || '—')} · ${escapeHtml(p.role || 'user')}</div>
         <div class="profile-bio">${escapeHtml(p.bio || '')}</div>${banned}${emailNote}`;
+      }
       if (state.isStaff) {
         $('#adminSection')?.classList.remove('hidden');
-        loadAdmin('overview');
+        try { loadAdmin('overview'); } catch (e) { console.warn(e); }
       } else {
         $('#adminSection')?.classList.add('hidden');
       }
       const subBtn = $('#btnDoSubmit');
       const hint = $('#submitHint');
-      const autoPub = !!(state.profile && state.profile.is_verified && state.profile.can_auto_publish);
+      const autoPub = !!(p.is_verified && p.can_auto_publish);
       if (subBtn) {
         subBtn.textContent = (state.isOwner || autoPub) ? 'بارگذاری و انتشار' : 'ارسال برای بررسی';
       }
@@ -411,6 +489,9 @@
           hint.textContent = 'آهنگ شما برای بررسی ارسال می‌شود و پس از تأیید منتشر خواهد شد.';
         }
       }
+      // Auth button label
+      const btnAuth = $('#btnAuth');
+      if (btnAuth) btnAuth.setAttribute('aria-label', 'پروفایل');
     } else {
       $('#profileGuest')?.classList.remove('hidden');
       $('#profileUser')?.classList.add('hidden');
@@ -551,18 +632,32 @@
         const { data, error } = await sb.auth.signInWithPassword({ email, password });
         if (error) {
           if (isEmailNotConfirmedError(error)) {
-            throw new Error('ایمیل شما هنوز تأیید نشده است. صندوق ورودی را بررسی کنید یا بعداً دوباره تلاش کنید.');
+            throw new Error('ایمیل شما هنوز تأیید نشده است. صندوق ورودی (و پوشه اسپم) را بررسی کنید. تا تأیید ایمیل، ورود ممکن نیست مگر Confirm email در Supabase خاموش باشد.');
           }
           if (isEmailRateLimitError(error)) {
             throw new Error('محدودیت ارسال ایمیل فعال است. کمی بعد دوباره تلاش کنید.');
           }
+          if (/invalid login|invalid credentials|wrong password/i.test(error.message || '')) {
+            throw new Error('ایمیل یا رمز عبور نادرست است.');
+          }
           throw error;
         }
-        if (!data.session) {
-          throw new Error('ورود انجام نشد. لطفاً دوباره تلاش کنید.');
+        if (!data || !data.session) {
+          throw new Error('ورود انجام نشد (نشست ساخته نشد). اگر تازه ثبت‌نام کرده‌اید، ابتدا ایمیل را تأیید کنید.');
         }
+        // Session exists — finish UI even if profile load is slow
+        state.user = data.session.user;
+        state.profile = state.profile || profileFromUser(data.session.user);
+        showMsg($('#authMsg'), 'ورود موفق بود.', 'ok');
         closeAuth();
-        await refreshSession();
+        setAuthBusy(false);
+        try {
+          await refreshSession();
+        } catch (re) {
+          console.warn(re);
+          updateAuthUI();
+        }
+        try { switchView('profile'); } catch (_) {}
       }
     } catch (err) {
       let m = err.message || 'خطا';
@@ -1232,9 +1327,15 @@
         }).join('')}</div>
         <p class="msg msg-info">پیش‌نمایش فقط برای مدیر/مالک است و آهنگ را در کاتالوگ عمومی منتشر نمی‌کند.</p>`;
       } else if (tab === 'users') {
-        const { data } = await sb.from('profiles')
+        let { data, error: uErr } = await sb.from('profiles')
           .select('id, username, display_name, role, is_verified, is_banned, can_auto_publish, created_at')
           .order('created_at', { ascending: false }).limit(40);
+        if (uErr && /can_auto_publish|column/i.test(uErr.message || '')) {
+          const fb = await sb.from('profiles')
+            .select('id, username, display_name, role, is_verified, is_banned, created_at')
+            .order('created_at', { ascending: false }).limit(40);
+          data = (fb.data || []).map(u => ({ ...u, can_auto_publish: false }));
+        }
         box.innerHTML = `<div class="admin-list">${(data || []).map(u => `
           <div class="admin-item">
             <strong>${escapeHtml(u.display_name || u.username || '')}</strong>
