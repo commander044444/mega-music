@@ -31,7 +31,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Vazirmatn:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="styles.css?v=nocache-contact2">
+  <link rel="stylesheet" href="styles.css?v=playlist2">
 
   <script type="application/ld+json">
   {
@@ -128,14 +128,64 @@
 
     <!-- PLAYLISTS -->
     <div id="view-playlists" class="view">
-      <div class="panel">
-        <h2>پلی‌لیست‌ها</h2>
-        <div id="playlistsPanel"></div>
+      <div class="panel" id="playlistsListWrap">
+        <div class="pl-header">
+          <h2>پلی‌لیست‌ها</h2>
+          <button type="button" class="btn btn-primary btn-sm" id="btnCreatePlaylist" style="display:none;">ساخت پلی‌لیست</button>
+        </div>
+        <div id="playlistsPanel" class="pl-grid"></div>
         <div id="playlistsEmpty" class="empty-state">
           <h2>پلی‌لیستی نیست</h2>
-          <p>پلی‌لیست عمومی یا رسمی هنوز ساخته نشده است.</p>
+          <p>هنوز پلی‌لیست قابل نمایشی وجود ندارد.</p>
         </div>
-        <button type="button" class="btn btn-primary" id="btnCreatePlaylist" style="margin-top:12px;display:none;">ساخت پلی‌لیست</button>
+      </div>
+      <div class="panel hidden" id="playlistDetailWrap">
+        <div class="pl-detail-top">
+          <button type="button" class="icon-btn" id="btnPlaylistBack" aria-label="بازگشت">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 18l-6-6 6-6"/></svg>
+          </button>
+          <span class="pl-detail-label">جزئیات پلی‌لیست</span>
+          <span style="width:40px"></span>
+        </div>
+        <div id="playlistDetailHero" class="pl-detail-hero"></div>
+        <div class="pl-detail-actions">
+          <button type="button" class="btn btn-primary" id="btnPlaylistPlayAll">پخش همه</button>
+        </div>
+        <div id="playlistDetailTracks" class="track-list"></div>
+        <div id="playlistDetailEmpty" class="empty-state hidden">
+          <h2>خالی است</h2>
+          <p>هنوز آهنگی به این پلی‌لیست اضافه نشده.</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Create playlist modal -->
+    <div id="playlistCreateOverlay" class="overlay" role="dialog" aria-modal="true">
+      <div class="modal">
+        <div class="modal-header">
+          <h3>ساخت پلی‌لیست</h3>
+          <button type="button" class="modal-close" id="playlistCreateClose" aria-label="بستن"><svg><use href="icons.svg#icon-close"></use></svg></button>
+        </div>
+        <form id="playlistCreateForm">
+          <div class="form-group"><label>نام پلی‌لیست *</label><input id="plTitle" required maxlength="80" placeholder="مثلاً مورد علاقه‌ها"></div>
+          <div class="form-group"><label>توضیح (اختیاری)</label><textarea id="plDesc" rows="2" maxlength="300"></textarea></div>
+          <div class="form-group"><label>کاور / پروفایل پلی‌لیست</label><input type="file" id="plCover" accept="image/jpeg,image/png,image/webp,image/gif"></div>
+          <p id="plVisibilityHint" class="msg msg-info" style="font-size:0.78rem"></p>
+          <div id="plCreateMsg"></div>
+          <button type="submit" class="btn btn-primary">ایجاد</button>
+        </form>
+      </div>
+    </div>
+
+    <!-- Add to playlist picker -->
+    <div id="playlistPickOverlay" class="overlay" role="dialog" aria-modal="true">
+      <div class="modal">
+        <div class="modal-header">
+          <h3>افزودن به پلی‌لیست</h3>
+          <button type="button" class="modal-close" id="playlistPickClose" aria-label="بستن"><svg><use href="icons.svg#icon-close"></use></svg></button>
+        </div>
+        <div id="playlistPickList"></div>
+        <button type="button" class="btn btn-ghost" id="playlistPickNew" style="margin-top:10px;">ساخت پلی‌لیست جدید</button>
       </div>
     </div>
 
@@ -373,6 +423,6 @@
   <audio id="mainAudio" preload="metadata"></audio>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
   <script src="config.js"></script>
-  <script src="app.js?v=nocache-contact2"></script>
+  <script src="app.js?v=playlist2"></script>
 </body>
 </html>

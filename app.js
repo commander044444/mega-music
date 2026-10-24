@@ -1245,70 +1245,237 @@
   }
 
   // ---------- Playlists ----------
+  // ---------- Playlists (redesigned) ----------
+  let pendingAddTrackId = null;
+  let currentPlaylistId = null;
+
+  function openPlaylistCreate() {
+    if (!state.user) { openAuth('login'); return; }
+    const hint = $('#plVisibilityHint');
+    if (hint) {
+      hint.textContent = state.isOwner
+        ? 'پلی‌لیست شما به‌صورت عمومی نمایش داده می‌شود.'
+        : 'پلی‌لیست شما خصوصی است و فقط خودتان می‌بینید.';
+    }
+    $('#playlistCreateOverlay')?.classList.add('open');
+    $('#plTitle')?.focus();
+  }
+
+  function closePlaylistCreate() {
+    $('#playlistCreateOverlay')?.classList.remove('open');
+    const f = $('#playlistCreateForm');
+    if (f) f.reset();
+    showMsg($('#plCreateMsg'), '', 'info');
+  }
+
+  function closePlaylistPick() {
+    $('#playlistPickOverlay')?.classList.remove('open');
+    pendingAddTrackId = null;
+  }
+
   async function loadPlaylists() {
     const box = $('#playlistsPanel');
     const empty = $('#playlistsEmpty');
-    if (!sb) { if (empty) empty.classList.remove('hidden'); return; }
-    const { data } = await sb.from('playlists')
-      .select('id, title, description, cover_url, is_public, is_official, user_id')
-      .or('is_public.eq.true,is_official.eq.true' + (state.user ? `,user_id.eq.${state.user.id}` : ''))
-      .order('created_at', { ascending: false })
-      .limit(50);
-    if (!data?.length) {
+    const listWrap = $('#playlistsListWrap');
+    const detail = $('#playlistDetailWrap');
+    if (listWrap) listWrap.classList.remove('hidden');
+    if (detail) detail.classList.add('hidden');
+    if (!box) return;
+    if (!sb) {
       box.innerHTML = '';
       empty?.classList.remove('hidden');
       return;
     }
-    empty?.classList.add('hidden');
-    box.innerHTML = data.map(pl => `
-      <div class="admin-item" data-pid="${escapeHtml(pl.id)}">
-        <strong>${escapeHtml(pl.title)}</strong>
-        ${pl.is_official ? ' <span class="status-pill status-published">رسمی</span>' : ''}
-        <div style="color:var(--text-muted);font-size:0.8rem">${escapeHtml(pl.description || '')}</div>
-        <div class="actions"><button type="button" class="btn btn-ghost btn-sm" data-play-pl="${escapeHtml(pl.id)}">پخش</button></div>
-      </div>`).join('');
-    if (state.user) $('#btnCreatePlaylist').style.display = 'block';
+    box.innerHTML = '<div class="spinner"></div>';
+    let q = sb.from('playlists')
+      .select('id, title, description, cover_url, is_public, is_official, user_id, created_at')
+      .order('created_at', { ascending: false })
+      .limit(60);
+    // RLS already filters; client request still asks public + own when logged in
+    const { data, error } = await q;
+    if (error) {
+      box.innerHTML = '';
+      empty?.classList.remove('hidden');
+      console.warn(error);
+      return;
+    }
+    const rows = data || [];
+    if (!rows.length) {
+      box.innerHTML = '';
+      empty?.classList.remove('hidden');
+    } else {
+      empty?.classList.add('hidden');
+      box.innerHTML = rows.map(function (pl) {
+        const cover = pl.cover_url
+          ? '<img class="pl-card-cover" src="' + escapeHtml(pl.cover_url) + '" alt="" loading="lazy">'
+          : '<div class="pl-card-cover pl-card-cover-ph">♪</div>';
+        const badges = [];
+        if (pl.is_official) badges.push('<span class="status-pill status-published">رسمی</span>');
+        if (pl.is_public) badges.push('<span class="status-pill status-published">عمومی</span>');
+        else badges.push('<span class="status-pill status-pending">خصوصی</span>');
+        return '<button type="button" class="pl-card" data-open-pl="' + escapeHtml(pl.id) + '">' +
+          cover +
+          '<div class="pl-card-body">' +
+          '<div class="pl-card-title">' + escapeHtml(pl.title) + '</div>' +
+          '<div class="pl-card-desc">' + escapeHtml(pl.description || '') + '</div>' +
+          '<div class="pl-card-badges">' + badges.join(' ') + '</div>' +
+          '</div></button>';
+      }).join('');
+    }
+    const btn = $('#btnCreatePlaylist');
+    if (btn) btn.style.display = state.user ? 'inline-flex' : 'none';
+  }
+
+  async function openPlaylistDetail(pid) {
+    if (!sb || !pid) return;
+    currentPlaylistId = pid;
+    const listWrap = $('#playlistsListWrap');
+    const detail = $('#playlistDetailWrap');
+    const hero = $('#playlistDetailHero');
+    const tracksBox = $('#playlistDetailTracks');
+    const empty = $('#playlistDetailEmpty');
+    if (listWrap) listWrap.classList.add('hidden');
+    if (detail) detail.classList.remove('hidden');
+    if (hero) hero.innerHTML = '<div class="spinner"></div>';
+    if (tracksBox) tracksBox.innerHTML = '';
+
+    const { data: pl } = await sb.from('playlists')
+      .select('id, title, description, cover_url, is_public, is_official, user_id')
+      .eq('id', pid).maybeSingle();
+    if (!pl) {
+      if (hero) hero.innerHTML = '<p class="msg msg-error">پلی‌لیست یافت نشد.</p>';
+      return;
+    }
+    const cover = pl.cover_url
+      ? '<img src="' + escapeHtml(pl.cover_url) + '" alt="">'
+      : '<div class="pl-detail-ph">♪</div>';
+    if (hero) {
+      hero.innerHTML =
+        '<div class="pl-detail-cover">' + cover + '</div>' +
+        '<div class="pl-detail-meta">' +
+        '<h2>' + escapeHtml(pl.title) + '</h2>' +
+        '<p>' + escapeHtml(pl.description || '') + '</p>' +
+        '<div>' + (pl.is_official ? '<span class="status-pill status-published">رسمی</span> ' : '') +
+        (pl.is_public ? '<span class="status-pill status-published">عمومی</span>' : '<span class="status-pill status-pending">خصوصی</span>') +
+        '</div></div>';
+    }
+
+    const { data: items } = await sb.from('playlist_items')
+      .select('track_id, position, tracks(id, title, artist_name, album, cover_url, audio_url, duration_seconds, tags, lyrics, status, uploaded_by)')
+      .eq('playlist_id', pid)
+      .order('position', { ascending: true });
+
+    const tracks = (items || [])
+      .map(function (i) { return i.tracks; })
+      .filter(function (t) { return t && (t.status === 'published' || state.isStaff || (state.user && t.uploaded_by === state.user.id)); })
+      .map(mapTrack);
+
+    state._playlistTracks = tracks;
+    if (!tracks.length) {
+      if (tracksBox) tracksBox.innerHTML = '';
+      empty?.classList.remove('hidden');
+    } else {
+      empty?.classList.add('hidden');
+      renderTracks(tracks, tracksBox, empty);
+    }
   }
 
   async function playPlaylist(pid) {
     if (!sb) return;
-    const { data: items } = await sb.from('playlist_items')
-      .select('track_id, position, tracks(id, title, artist_name, cover_url, audio_url, duration_seconds, tags, lyrics, status)')
-      .eq('playlist_id', pid).order('position');
-    const tracks = (items || []).map(i => i.tracks).filter(t => t && t.status === 'published').map(mapTrack);
-    if (!tracks.length) { alert('این پلی‌لیست خالی است یا آهنگ منتشرشده ندارد.'); return; }
-    state.queue = tracks;
-    loadTrack(0, true);
+    if (state._playlistTracks && currentPlaylistId === pid && state._playlistTracks.length) {
+      state.queue = state._playlistTracks.slice();
+      loadTrack(0, true);
+      return;
+    }
+    await openPlaylistDetail(pid);
+    if (state._playlistTracks && state._playlistTracks.length) {
+      state.queue = state._playlistTracks.slice();
+      loadTrack(0, true);
+    } else {
+      alert('این پلی‌لیست خالی است یا آهنگ قابل پخش ندارد.');
+    }
+  }
+
+  async function createPlaylistFromForm(e) {
+    if (e) e.preventDefault();
+    if (!sb || !state.user) { openAuth('login'); return; }
+    const title = ($('#plTitle')?.value || '').trim();
+    const description = ($('#plDesc')?.value || '').trim();
+    const file = $('#plCover')?.files && $('#plCover').files[0];
+    if (!title) {
+      showMsg($('#plCreateMsg'), 'نام پلی‌لیست لازم است.', 'error');
+      return;
+    }
+    showMsg($('#plCreateMsg'), 'در حال ایجاد…', 'info');
+    let cover_url = null;
+    try {
+      if (file) {
+        if (file.size > 5 * 1024 * 1024) throw new Error('حجم کاور حداکثر ۵ مگابایت');
+        const ok = /image\/(jpeg|png|webp|gif)/i.test(file.type) || /\.(jpe?g|png|webp|gif)$/i.test(file.name);
+        if (!ok) throw new Error('فرمت کاور نامعتبر است');
+        const safe = file.name.replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 60);
+        const path = state.user.id + '/playlists/' + Date.now() + '-' + safe;
+        await uploadWithProgress('covers', path, file, file.type || 'image/jpeg', null);
+        cover_url = sb.storage.from('covers').getPublicUrl(path).data.publicUrl;
+      }
+      const isOwner = !!state.isOwner;
+      const { error } = await sb.from('playlists').insert({
+        user_id: state.user.id,
+        title: title,
+        description: description || null,
+        cover_url: cover_url,
+        is_public: isOwner,
+        is_official: isOwner
+      });
+      if (error) throw error;
+      showMsg($('#plCreateMsg'), 'ساخته شد.', 'ok');
+      closePlaylistCreate();
+      await loadPlaylists();
+    } catch (err) {
+      showMsg($('#plCreateMsg'), err.message || 'خطا', 'error');
+    }
   }
 
   async function createPlaylist() {
-    if (!sb || !state.user) { openAuth('login'); return; }
-    const title = prompt('نام پلی‌لیست:');
-    if (!title || !title.trim()) return;
-    const { error } = await sb.from('playlists').insert({
-      user_id: state.user.id, title: title.trim(), is_public: true,
-      is_official: state.isOwner
-    });
-    if (error) alert(error.message); else loadPlaylists();
+    openPlaylistCreate();
   }
 
   async function addToPlaylist(trackId) {
     if (!sb || !state.user) { openAuth('login'); return; }
-    const { data: pls } = await sb.from('playlists').select('id, title').eq('user_id', state.user.id);
-    if (!pls?.length) {
-      if (confirm('پلی‌لیستی ندارید. یکی بسازیم؟')) await createPlaylist();
+    pendingAddTrackId = trackId;
+    const { data: pls } = await sb.from('playlists').select('id, title, cover_url, is_public').eq('user_id', state.user.id).order('created_at', { ascending: false });
+    const list = $('#playlistPickList');
+    if (!pls || !pls.length) {
+      if (list) list.innerHTML = '<p class="msg msg-info">پلی‌لیستی ندارید.</p>';
+      $('#playlistPickOverlay')?.classList.add('open');
       return;
     }
-    const names = pls.map((p, i) => `${i + 1}. ${p.title}`).join('\n');
-    const choice = prompt(`شماره پلی‌لیست:\n${names}`);
-    const idx = parseInt(choice, 10) - 1;
-    if (isNaN(idx) || !pls[idx]) return;
-    const { error } = await sb.from('playlist_items').insert({
-      playlist_id: pls[idx].id, track_id: trackId, position: Date.now()
-    });
-    if (error) alert(/duplicate|unique/i.test(error.message) ? 'این آهنگ قبلاً در پلی‌لیست است.' : error.message);
-    else alert('افزوده شد.');
+    if (list) {
+      list.innerHTML = pls.map(function (p) {
+        return '<button type="button" class="pl-pick-item" data-pick-pl="' + escapeHtml(p.id) + '">' +
+          (p.cover_url ? '<img src="' + escapeHtml(p.cover_url) + '" alt="">' : '<span class="pl-pick-ph">♪</span>') +
+          '<span>' + escapeHtml(p.title) + '</span></button>';
+      }).join('');
+    }
+    $('#playlistPickOverlay')?.classList.add('open');
   }
+
+  async function addTrackToPlaylist(playlistId, trackId) {
+    if (!sb || !state.user || !playlistId || !trackId) return;
+    const { error } = await sb.from('playlist_items').insert({
+      playlist_id: playlistId,
+      track_id: trackId,
+      position: Date.now()
+    });
+    if (error) {
+      alert(/duplicate|unique/i.test(error.message) ? 'این آهنگ قبلاً در پلی‌لیست است.' : error.message);
+      return;
+    }
+    closePlaylistPick();
+    if (currentPlaylistId === playlistId) openPlaylistDetail(playlistId);
+  }
+
+  // ---------- Admin ----------
 
   // ---------- Admin ----------
   async function loadAdmin(tab) {
@@ -1828,6 +1995,16 @@
       if (ver) { toggleVerify(ver.dataset.verify, ver.dataset.v); return; }
       const ap = e.target.closest('[data-autopub]');
       if (ap) { toggleAutoPublish(ap.dataset.autopub, ap.dataset.ap); return; }
+      const openPl = e.target.closest('[data-open-pl]');
+      if (openPl) {
+        openPlaylistDetail(openPl.getAttribute('data-open-pl'));
+        return;
+      }
+      const pickPl = e.target.closest('[data-pick-pl]');
+      if (pickPl) {
+        addTrackToPlaylist(pickPl.getAttribute('data-pick-pl'), pendingAddTrackId);
+        return;
+      }
       const pl = e.target.closest('[data-play-pl]');
       if (pl) { playPlaylist(pl.dataset.playPl); return; }
     });
@@ -1904,7 +2081,17 @@
     $('#recoverClose')?.addEventListener('click', () => $('#recoverOverlay')?.classList.remove('open'));
     $('#recoverForm')?.addEventListener('submit', handleRecover);
     $('#newPassForm')?.addEventListener('submit', handleNewPass);
-    $('#btnCreatePlaylist')?.addEventListener('click', createPlaylist);
+    
+    $('#btnCreatePlaylist')?.addEventListener('click', openPlaylistCreate);
+    $('#playlistCreateClose')?.addEventListener('click', closePlaylistCreate);
+    $('#playlistCreateForm')?.addEventListener('submit', createPlaylistFromForm);
+    $('#playlistCreateOverlay')?.addEventListener('click', e => { if (e.target.id === 'playlistCreateOverlay') closePlaylistCreate(); });
+    $('#btnPlaylistBack')?.addEventListener('click', () => loadPlaylists());
+    $('#btnPlaylistPlayAll')?.addEventListener('click', () => { if (currentPlaylistId) playPlaylist(currentPlaylistId); });
+    $('#playlistPickClose')?.addEventListener('click', closePlaylistPick);
+    $('#playlistPickOverlay')?.addEventListener('click', e => { if (e.target.id === 'playlistPickOverlay') closePlaylistPick(); });
+    $('#playlistPickNew')?.addEventListener('click', () => { closePlaylistPick(); openPlaylistCreate(); });
+
     $('#btnBackHome')?.addEventListener('click', () => switchView('home'));
     $('#btnMySubmissions')?.addEventListener('click', async () => {
       if (!sb || !state.user) return;
