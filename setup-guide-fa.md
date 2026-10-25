@@ -147,3 +147,8 @@ SQL: بعد از migration-001، فایل `migration-002-auto-publish.sql` را 
 
 1. `migration-005-playlist-visibility.sql` را در Supabase اجرا کنید.
 2. پلی‌لیست **مالک** عمومی (و رسمی) است؛ پلی‌لیست **کاربر عادی** همیشه خصوصی می‌ماند.
+
+
+## نمایش عمومی بدون لاگین
+
+اگر مهمان‌ها کاتالوگ خالی می‌بینند، `migration-006-public-catalog.sql` را در SQL Editor اجرا کنید تا RLS خواندن `published` برای نقش `anon` تضمین شود.

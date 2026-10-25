@@ -82,18 +82,47 @@
   async function loadCatalog() {
     state.tracks = [];
     state.filtered = [];
-    if (!sb) { renderTracks(); updateCount(); return; }
+    // Public catalog — must work for guests (no login required)
+    if (!sb) {
+      renderTracks();
+      updateCount();
+      const empty = $('#emptyState');
+      if (empty) {
+        empty.classList.remove('hidden');
+        const p = empty.querySelector('p');
+        if (p) p.textContent = 'اتصال به سرور برقرار نیست.';
+      }
+      return;
+    }
     try {
       const { data, error } = await sb.from('tracks')
         .select('id, title, artist_name, album, cover_url, audio_url, duration_seconds, tags, is_downloadable, status, lyrics, uploaded_by')
         .eq('status', 'published')
         .order('created_at', { ascending: false })
         .limit(200);
-      if (error) console.warn('catalog', error.message);
+      if (error) {
+        console.warn('catalog', error);
+        state.tracks = [];
+        state.filtered = [];
+        state.queue = [];
+        renderTracks();
+        updateCount();
+        const empty = $('#emptyState');
+        if (empty) {
+          empty.classList.remove('hidden');
+          const h = empty.querySelector('h2');
+          const p = empty.querySelector('p');
+          if (h) h.textContent = 'کاتالوگ بارگذاری نشد';
+          if (p) p.textContent = 'اگر مهمان هستید و این پیام می‌ماند، مالک باید migration-006-public-catalog.sql را در Supabase اجرا کند.';
+        }
+        return;
+      }
       state.tracks = (data || []).map(mapTrack);
-      state.filtered = [...state.tracks];
-      state.queue = [...state.tracks];
-    } catch (e) { console.warn(e); }
+      state.filtered = state.tracks.slice();
+      state.queue = state.tracks.slice();
+    } catch (e) {
+      console.warn(e);
+    }
     renderTracks();
     updateCount();
     try { await loadHomeDiscovery(); } catch (e) { console.warn(e); }
@@ -2203,7 +2232,13 @@
       loadAdmin(b.dataset.tab);
     }));
 
-    if (sb) sb.auth.onAuthStateChange(() => refreshSession());
+    if (sb) {
+      sb.auth.onAuthStateChange(function (event) {
+        refreshSession().catch(function (e) { console.warn(e); });
+        // Re-load public catalog after sign-out so guest still sees published tracks
+        if (event === 'SIGNED_OUT') loadCatalog();
+      });
+    }
   }
 
 
@@ -2474,10 +2509,17 @@
   function init() {
     if (!hasSupabase) $('#configBanner')?.classList.remove('hidden');
     setPlayerEnabled(false);
+    // Always show home to guests and users
+    $$('.view').forEach(function (v) { v.classList.remove('active'); });
+    $('#view-home')?.classList.add('active', 'view-anim-in');
+    $$('.nav-item').forEach(function (n) {
+      n.classList.toggle('active', n.dataset.view === 'home');
+    });
     bind();
     checkRecoverySession();
+    // Catalog first (public), auth second — login not required to browse
     loadCatalog();
-    refreshSession();
+    refreshSession().catch(function (e) { console.warn(e); });
     renderContactLinks();
   }
 
