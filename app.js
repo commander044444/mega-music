@@ -11,8 +11,51 @@
     String(cfg.supabaseUrl).startsWith('http') && String(cfg.supabaseAnonKey).length > 20);
 
   let sb = null;
-  if (hasSupabase && window.supabase) {
-    sb = window.supabase.createClient(cfg.supabaseUrl, cfg.supabaseAnonKey);
+  if (hasSupabase && window.supabase && typeof window.supabase.createClient === 'function') {
+    try {
+      sb = window.supabase.createClient(cfg.supabaseUrl, cfg.supabaseAnonKey, {
+        auth: {
+          persistSession: true,
+          autoRefreshToken: true,
+          detectSessionInUrl: true,
+          storage: window.localStorage
+        }
+      });
+    } catch (e) {
+      console.error('Supabase init failed', e);
+      sb = null;
+    }
+  }
+
+  function withTimeout(promise, ms, label) {
+    return Promise.race([
+      promise,
+      new Promise(function (_, reject) {
+        setTimeout(function () {
+          reject(new Error((label || 'درخواست') + ' بیش از حد طول کشید. اینترنت یا Supabase را بررسی کنید.'));
+        }, ms);
+      })
+    ]);
+  }
+
+  async function restPublishedTracks() {
+    const base = String(cfg.supabaseUrl || '').replace(/\/$/, '');
+    const key = cfg.supabaseAnonKey;
+    if (!base || !key) throw new Error('پیکربندی نیست');
+    const qs = 'select=id,title,artist_name,album,cover_url,audio_url,duration_seconds,tags,is_downloadable,status,lyrics,uploaded_by'
+      + '&status=eq.published&order=created_at.desc&limit=200';
+    const res = await withTimeout(fetch(base + '/rest/v1/tracks?' + qs, {
+      headers: {
+        apikey: key,
+        Authorization: 'Bearer ' + key,
+        Accept: 'application/json'
+      }
+    }), 15000, 'بارگذاری کاتالوگ');
+    if (!res.ok) {
+      const t = await res.text();
+      throw new Error('خطای کاتالوگ ' + res.status);
+    }
+    return res.json();
   }
 
   const MAX_AUDIO = 30 * 1024 * 1024;
@@ -82,49 +125,65 @@
   async function loadCatalog() {
     state.tracks = [];
     state.filtered = [];
-    // Public catalog — must work for guests (no login required)
-    if (!sb) {
-      renderTracks();
-      updateCount();
-      const empty = $('#emptyState');
-      if (empty) {
-        empty.classList.remove('hidden');
-        const p = empty.querySelector('p');
-        if (p) p.textContent = 'اتصال به سرور برقرار نیست.';
-      }
-      return;
+    const box = $('#trackList');
+    const empty = $('#emptyState');
+    if (box) {
+      box.innerHTML = '<div class="skeleton-list" aria-busy="true"><div class="skeleton-row"></div><div class="skeleton-row"></div><div class="skeleton-row"></div></div>';
     }
-    try {
-      const { data, error } = await sb.from('tracks')
-        .select('id, title, artist_name, album, cover_url, audio_url, duration_seconds, tags, is_downloadable, status, lyrics, uploaded_by')
-        .eq('status', 'published')
-        .order('created_at', { ascending: false })
-        .limit(200);
-      if (error) {
-        console.warn('catalog', error);
-        state.tracks = [];
-        state.filtered = [];
-        state.queue = [];
-        renderTracks();
-        updateCount();
-        const empty = $('#emptyState');
-        if (empty) {
-          empty.classList.remove('hidden');
-          const h = empty.querySelector('h2');
-          const p = empty.querySelector('p');
-          if (h) h.textContent = 'کاتالوگ بارگذاری نشد';
-          if (p) p.textContent = 'اگر مهمان هستید و این پیام می‌ماند، مالک باید migration-006-public-catalog.sql را در Supabase اجرا کند.';
-        }
-        return;
+    if (empty) empty.classList.add('hidden');
+
+    let rows = null;
+    let lastErr = null;
+
+    if (sb) {
+      try {
+        const res = await withTimeout(
+          sb.from('tracks')
+            .select('id, title, artist_name, album, cover_url, audio_url, duration_seconds, tags, is_downloadable, status, lyrics, uploaded_by')
+            .eq('status', 'published')
+            .order('created_at', { ascending: false })
+            .limit(200),
+          15000,
+          'کاتالوگ'
+        );
+        if (res.error) lastErr = res.error;
+        else rows = res.data || [];
+      } catch (e) {
+        lastErr = e;
+        console.warn('catalog client', e);
       }
-      state.tracks = (data || []).map(mapTrack);
-      state.filtered = state.tracks.slice();
-      state.queue = state.tracks.slice();
-    } catch (e) {
-      console.warn(e);
     }
+
+    if (rows === null) {
+      try {
+        rows = await restPublishedTracks();
+        lastErr = null;
+      } catch (e) {
+        lastErr = e;
+        console.warn('catalog rest', e);
+        rows = [];
+      }
+    }
+
+    state.tracks = (rows || []).map(mapTrack);
+    state.filtered = state.tracks.slice();
+    state.queue = state.tracks.slice();
     renderTracks();
     updateCount();
+
+    if (!state.tracks.length && empty) {
+      empty.classList.remove('hidden');
+      const h = empty.querySelector('h2');
+      const p = empty.querySelector('p');
+      if (lastErr) {
+        if (h) h.textContent = 'بارگذاری انجام نشد';
+        if (p) p.textContent = String(lastErr.message || lastErr);
+      } else {
+        if (h) h.textContent = 'هنوز آهنگی منتشر نشده';
+        if (p) p.textContent = 'آثار منتشرشده برای همه بدون ورود اینجا می‌آیند.';
+      }
+    }
+
     try { await loadHomeDiscovery(); } catch (e) { console.warn(e); }
     try { await loadPublicAds(); } catch (e) { console.warn(e); }
   }
@@ -687,14 +746,15 @@
           showMsg($('#authMsg'), 'نام کاربری باید ۳ تا ۵۰ کاراکتر انگلیسی، عدد، _ یا . باشد.', 'error');
           return;
         }
-        const { data, error } = await sb.auth.signUp({
+        showMsg($('#authMsg'), 'در حال ثبت‌نام…', 'info');
+        const { data, error } = await withTimeout(sb.auth.signUp({
           email,
           password,
           options: {
             data: { username, display_name: displayName || username },
             emailRedirectTo: location.origin + location.pathname
           }
-        });
+        }), 25000, 'ثبت‌نام');
 
         if (error) {
           if (isEmailRateLimitError(error)) {
@@ -737,35 +797,39 @@
           showMsg($('#authMsg'), 'پاسخ ثبت‌نام نامشخص بود. اگر ایمیلی نیامد، بعداً دوباره تلاش کنید.', 'error');
         }
       } else {
-        const { data, error } = await sb.auth.signInWithPassword({ email, password });
+        showMsg($('#authMsg'), 'در حال ورود…', 'info');
+        const loginRes = await withTimeout(sb.auth.signInWithPassword({ email, password }), 20000, 'ورود');
+        const data = loginRes.data;
+        const error = loginRes.error;
         if (error) {
           if (isEmailNotConfirmedError(error)) {
-            throw new Error('ایمیل شما هنوز تأیید نشده است. صندوق ورودی (و پوشه اسپم) را بررسی کنید. تا تأیید ایمیل، ورود ممکن نیست مگر Confirm email در Supabase خاموش باشد.');
+            throw new Error('ایمیل هنوز تأیید نشده است. صندوق ورودی/اسپم را ببینید یا Confirm email را در Supabase خاموش کنید.');
           }
           if (isEmailRateLimitError(error)) {
-            throw new Error('محدودیت ارسال ایمیل فعال است. کمی بعد دوباره تلاش کنید.');
+            throw new Error('محدودیت ارسال ایمیل فعال است. کمی بعد تلاش کنید.');
           }
-          if (/invalid login|invalid credentials|wrong password/i.test(error.message || '')) {
+          if (/invalid login|invalid credentials|wrong password|invalid_grant/i.test(error.message || '')) {
             throw new Error('ایمیل یا رمز عبور نادرست است.');
           }
           throw error;
         }
         if (!data || !data.session) {
-          throw new Error('ورود انجام نشد (نشست ساخته نشد). اگر تازه ثبت‌نام کرده‌اید، ابتدا ایمیل را تأیید کنید.');
+          throw new Error('نشست ساخته نشد. ایمیل را تأیید کنید یا Confirm email را خاموش کنید.');
         }
-        // Session exists — finish UI even if profile load is slow
         state.user = data.session.user;
-        state.profile = state.profile || profileFromUser(data.session.user);
+        state.profile = profileFromUser(data.session.user);
+        updateAuthUI();
         showMsg($('#authMsg'), 'ورود موفق بود.', 'ok');
         closeAuth();
         setAuthBusy(false);
         try {
-          await refreshSession();
+          await withTimeout(refreshSession(), 12000, 'پروفایل');
         } catch (re) {
           console.warn(re);
           updateAuthUI();
         }
-        try { switchView('profile'); } catch (_) {}
+        try { switchView('more'); } catch (_) {}
+        try { loadCatalog(); } catch (_) {}
       }
     } catch (err) {
       let m = err.message || 'خطا';
@@ -785,7 +849,7 @@
     setAuthBusy(true);
     showMsg($('#authMsg'), 'در حال تلاش برای ورود…', 'info');
     try {
-      const { data, error } = await sb.auth.signInWithPassword({ email, password });
+      const { data, error } = await withTimeout(sb.auth.signInWithPassword({ email, password }), 20000, 'ورود');
       if (error) {
         if (isEmailNotConfirmedError(error)) {
           showMsg(
